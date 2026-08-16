@@ -28,13 +28,15 @@ cargo run -p game-ui
 - 存档：`~/.local/share/rust-learning-game/save.toml`
 - 新增关卡 = 在 `assets/levels/` 放一个 TOML，文件名前缀决定顺序
 
-## 代码校验与安全（开发期）
+## 代码校验与安全
 
-- 编译：裸 `rustc --edition 2021`，仅 std
-- 超时：编译 10s / 运行 2s，超时终止
-- 静态拦截：syn 扫描玩家代码中的 `std::fs` / `std::net` / `std::process` / `std::env` / `std::thread`
-- **安全状态：开发期沙盒（无进程隔离）**。玩家代码只受超时 + 静态拦截限制，尚未做 bwrap 真隔离（计划②）。
-- 🤝 欢迎贡献：本项目公开协作，PR 请附带测试；正式发布前必须完成 bwrap 沙盒（见 docs/superpowers/plans 计划②）。
+玩家代码在 **bwrap（bubblewrap）真隔离沙盒** 中编译与运行（v3 §9.1）：
+
+- 隔离：`--unshare-all`（用户/pid/网络等全新命名空间）；整棵根文件系统只读挂载（`--ro-bind / /`，禁写主目录与系统目录）；沙盒内 `/tmp` 为 tmpfs 工作区；最小 `/proc` 与最小设备集（urandom/random/null/zero/tty，不暴露块设备）；禁网络。
+- 资源限制：编译 10s / 运行 2s 超时终止；内存上限 `ulimit -v`（编译 1 GiB / 运行 512 MiB）。
+- 纵深防御：syn 静态拦截保留（`std::fs` / `std::net` / `std::process` / `std::env` / `std::thread::spawn` / `unsafe` / `extern`）；bwrap 是进程级兜底——即使静态拦截被绕过，沙盒仍隔离网络、写入与资源耗尽。
+- 安全优先：bwrap 缺失或不可用时游戏**拒绝运行**并给出中文错误（不静默降级到无隔离模式）。
+- 🤝 欢迎贡献：本项目公开协作，PR 请附带测试。
 
 ## 素材与许可
 

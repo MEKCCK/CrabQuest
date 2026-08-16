@@ -13,18 +13,23 @@ pub mod streak;
 pub mod ui;
 pub mod validate;
 
-pub use app::{ChapterMapData, FeedbackData, GameApp, GameFlow, Input, LevelData, MapEntry, MenuData, Screen};
+pub use app::{
+    ChapterMapData, FeedbackData, GameApp, GameFlow, Input, LevelData, MapEntry, MenuData, Screen,
+};
 pub use editor::{tokenize, TokenKind, TokenSpan};
 pub use engine::{
-    hint_unlock_state, load_custom_levels, CustomLevelError, Engine, HintUnlockState, XP_BOSS,
-    XP_BOSS_FALLBACK, XP_COMBO, XP_PASS, XP_PERFECT,
+    boss_hint_lock_remaining, boss_hint_locked, hint_unlock_state, load_custom_levels,
+    min_best_time, CustomLevelError, Engine, HintUnlockState, XP_BOSS, XP_BOSS_FALLBACK, XP_COMBO,
+    XP_PASS, XP_PERFECT,
 };
 pub use error::GameError;
 pub use level::{Level, LevelSet, LevelTier};
 pub use rank::{rank_for, Rank};
-pub use sandbox::{CompileOutcome, DevSandbox, RunOutcome, Sandbox};
+pub use sandbox::{BwrapSandbox, CompileOutcome, DevSandbox, RunOutcome, Sandbox};
 pub use save::{load as load_save, save as save_game, LevelProgress, LevelState, SaveData};
-pub use streak::{days_from_civil, is_yesterday, parse_date, previous_day, today_str, touch_streak};
+pub use streak::{
+    days_from_civil, is_yesterday, parse_date, previous_day, today_str, touch_streak,
+};
 
 pub use achievements::{
     achievement_name, check_achievements, is_boss_level_id, AchievementCheck, ACHIEVEMENTS,
