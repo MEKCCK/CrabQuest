@@ -12,6 +12,18 @@ pub enum Validation {
     Fail { feedback: Vec<String> },
 }
 
+/// expect_output 规范化（v3 §3.3）：CRLF 归一化（先于 trim）→ 两端 trim；
+/// trim_lines=true 时每行再去尾随空白。行序敏感、内部空行参与比对。
+pub fn normalize_output(text: &str, trim_lines: bool) -> String {
+    let t = text.replace("\r\n", "\n");
+    let t = t.trim();
+    if trim_lines {
+        t.lines().map(|l| l.trim_end()).collect::<Vec<_>>().join("\n")
+    } else {
+        t.to_string()
+    }
+}
+
 /// 核心校验：编译 → （失败按 allow_compile_fail 分支；成功）→ 运行 → 比对 stdout
 pub fn validate(
     level: &Level,
@@ -56,14 +68,15 @@ pub fn validate(
             }
             match sandbox.run(&binary)? {
                 RunOutcome::Ok { stdout } => {
-                    if level.expect_output.trim().is_empty() || stdout.trim() == level.expect_output.trim() {
+                    let expect = normalize_output(&level.expect_output, level.trim_lines);
+                    let got = normalize_output(&stdout, level.trim_lines);
+                    if expect.is_empty() || got == expect {
                         Ok(Validation::Pass)
                     } else {
                         Ok(Validation::Fail {
                             feedback: vec![format!(
                                 "编译通过，但输出不符合要求。\n期望输出：{}\n实际输出：{}",
-                                level.expect_output.trim(),
-                                stdout.trim()
+                                expect, got
                             )],
                         })
                     }
@@ -97,6 +110,14 @@ mod tests {
             allow_compile_fail: allow_fail,
             expect_error_code: expect_code.into(),
             source: "test".into(),
+            kind: "code".into(),
+            expect_panic: String::new(),
+            hint_unlock: Vec::new(),
+            is_boss: false,
+            trim_lines: false,
+            options: Vec::new(),
+            answer_index: None,
+            link: String::new(),
         }
     }
 
@@ -171,6 +192,43 @@ mod tests {
             Validation::Fail { feedback } => assert!(feedback[0].contains("编译成功")),
             other => panic!("expected Fail, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn crlf_normalized_before_compare() {
+        // expect 含 \r\n 时先归一化为 \n 再 trim，与运行输出逐字节相等
+        let lv = level("t9", "a\r\nb\r\n", false, "");
+        let code = "fn main() { println!(\"a\"); println!(\"b\"); }";
+        assert_eq!(validate(&lv, code, &ErrorMapper::default_fallback(), &sb()).unwrap(), Validation::Pass);
+    }
+
+    #[test]
+    fn trailing_space_fails_by_default() {
+        // 行尾空格敏感：内部行的行尾空格参与比对（不整行 trim）
+        let lv = level("t10", "a \nb", false, "");
+        let code = "fn main() { println!(\"a\"); println!(\"b\"); }";
+        match validate(&lv, code, &ErrorMapper::default_fallback(), &sb()).unwrap() {
+            Validation::Fail { feedback } => {
+                assert!(feedback[0].contains("a \nb"), "feedback: {feedback:?}");
+            }
+            other => panic!("expected Fail, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn trim_lines_relaxes_trailing_space() {
+        let mut lv = level("t11", "a \nb", false, "");
+        lv.trim_lines = true;
+        let code = "fn main() { println!(\"a\"); println!(\"b\"); }";
+        assert_eq!(validate(&lv, code, &ErrorMapper::default_fallback(), &sb()).unwrap(), Validation::Pass);
+    }
+
+    #[test]
+    fn internal_blank_lines_participate() {
+        // 内部空行参与比对：输出中的空行必须在 expect 中出现
+        let lv = level("t12", "a\n\nb", false, "");
+        let code = "fn main() { println!(\"a\"); println!(); println!(\"b\"); }";
+        assert_eq!(validate(&lv, code, &ErrorMapper::default_fallback(), &sb()).unwrap(), Validation::Pass);
     }
 
     #[test]
