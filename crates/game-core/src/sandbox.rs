@@ -711,13 +711,13 @@ mod tests {
     }
 
     #[test]
-    fn all_15_starter_codes_pass_blocklist() {
+    fn all_starter_codes_pass_blocklist() {
         // 从仓库 assets/levels 动态读取（不复制代码防漂移），断言现有关卡
         // starter_code 全部通过静态拦截（无合法关卡被误杀，验收项）。
         use crate::level::LevelSet;
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/levels");
         let set = LevelSet::load(&dir).expect("加载 assets/levels 失败");
-        assert_eq!(set.len(), 15, "第一版应有 15 关");
+        assert_eq!(set.len(), 55, "当前关卡集应有 55 关");
         for lv in &set.levels {
             check_blocked_apis(&lv.starter_code)
                 .unwrap_or_else(|e| panic!("关卡 {} 的 starter_code 被静态拦截误杀: {e}", lv.id));
