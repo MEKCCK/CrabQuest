@@ -58,6 +58,70 @@ pub fn award_xp(
     xp.min(cap)
 }
 
+/// P2-11：失败联动模式下提示面板的展示状态（由 `hint_unlock_state` 纯函数推导）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HintUnlockState {
+    /// 已解锁提示条数：`hints[0..unlocked)` 可见（fc 越界时恒为 hints 总长）
+    pub unlocked: usize,
+    /// 自动展开/推进到的提示索引（0-based；表驱动：0-1 次失败→0，2 次→0，
+    /// 3 次→1，≥4 次→最后一条；恒 < unlocked，unlocked==0 时恒 0）
+    pub expanded: usize,
+    /// 失败次数 ≥4 → 显示「查看参考答案」按钮（二次确认「先自己试试？」）
+    pub show_reference: bool,
+}
+
+/// P2-11：由失败次数推导提示解锁/展开状态（v3 §3.4 行为表 + §7.6 防挫败定稿）。
+///
+/// - `hint_unlock` 为空（旧 TOML 缺省）→ 返回 `None`，UI 保持现状手动逐级揭示（hint_step 步进）；
+/// - `hint_unlock == [1, 3, 5]`（v3 推荐默认阈值）→ 按行为表 4 档：
+///   0-1 次失败 → hint[0] 可看；≥2 次 → hint[0..2) 解锁且自动展开 hint[0]；
+///   ≥3 次 → 全部解锁且自动推进到 hint[1]；≥4 次 → 推进到最后一条 + 参考答案按钮；
+/// - 其余自定义阈值向量 → 逐阈值推导：hint i 在 `fail_count >= hint_unlock[i]` 时解锁，
+///   自动展开到「已解锁且阈值 ≤ fail_count」的最高索引。
+///
+/// 纯函数：不改任何状态，UI 只读。
+pub fn hint_unlock_state(
+    hints_len: usize,
+    hint_unlock: &[u32],
+    fail_count: u32,
+) -> Option<HintUnlockState> {
+    if hints_len == 0 || hint_unlock.is_empty() {
+        return None;
+    }
+    if hint_unlock == [1, 3, 5] {
+        // 行为表 4 档（v3 §7.6；默认 [1,3,5] 语义落地）
+        let unlocked = match fail_count {
+            0..=1 => 1.min(hints_len),
+            2 => 2.min(hints_len),
+            _ => hints_len, // ≥3
+        };
+        let expanded = match fail_count {
+            0..=2 => 0,
+            3 => 1.min(hints_len.saturating_sub(1)),
+            _ => 2.min(hints_len.saturating_sub(1)), // ≥4 → 推进到最后一条
+        };
+        let expanded = expanded.min(unlocked.saturating_sub(1));
+        Some(HintUnlockState { unlocked, expanded, show_reference: fail_count >= 4 })
+    } else {
+        // 自定义阈值向量：逐阈值解锁
+        let unlocked = hint_unlock
+            .iter()
+            .take(hints_len)
+            .filter(|&&t| fail_count >= t)
+            .count();
+        let expanded = hint_unlock
+            .iter()
+            .take(hints_len)
+            .enumerate()
+            .filter(|(_, &t)| fail_count >= t)
+            .map(|(i, _)| i)
+            .last()
+            .unwrap_or(0)
+            .min(unlocked.saturating_sub(1));
+        Some(HintUnlockState { unlocked, expanded, show_reference: fail_count >= 4 })
+    }
+}
+
 pub struct Engine {
     pub level_set: LevelSet,
     pub save: SaveData,
@@ -260,6 +324,32 @@ impl Engine {
         );
         self.save.streak_days = streak;
         self.save.last_played_date = Some(date);
+    }
+
+    /// P2-11：记录一次 hint 查看（零成本：不扣心/XP、不改 fail_count/attempts、
+    /// 不影响完美判定——`no_hint_perfect` 只看 `hints_used.is_empty()`）。
+    ///
+    /// - 幂等去重：同一索引多次查看只记一次；`hints_used` 保持升序；
+    /// - 查看 hint 计为活跃行为（P2-09，同日幂等）；
+    /// - 返回是否首次记录（调用方可用作「新查看」信号）。
+    pub fn reveal_hint(&mut self, level_id: &str, index: u32) -> bool {
+        let fresh = {
+            let entry = self
+                .save
+                .level_states
+                .entry(level_id.to_string())
+                .or_insert_with(LevelProgress::default);
+            if !entry.hints_used.contains(&index) {
+                entry.hints_used.push(index);
+                entry.hints_used.sort_unstable();
+                entry.hints_used.dedup();
+                true
+            } else {
+                false
+            }
+        };
+        self.touch_activity();
+        fresh
     }
 
     pub fn current_level(&self) -> Option<&Level> {
@@ -817,5 +907,114 @@ source = "rustlings"
         e.submit(good).unwrap();
         // 重复通关不重复入账（HashSet 幂等，无新成就）
         assert_eq!(e.save.achievements, first);
+    }
+
+    // ===== P2-11：hint 失败联动（v3 §3.4 行为表 + §7.6）=====
+
+    #[test]
+    fn hint_unlock_state_default_table_four_tiers() {
+        // 默认阈值 [1,3,5]（3 条提示）：行为表 4 档
+        let s = |fc| hint_unlock_state(3, &[1, 3, 5], fc).unwrap();
+        // 0-1 次失败：hint[0] 可看
+        assert_eq!(s(0), HintUnlockState { unlocked: 1, expanded: 0, show_reference: false });
+        assert_eq!(s(1), HintUnlockState { unlocked: 1, expanded: 0, show_reference: false });
+        // ≥2 次：hint[0..2) 解锁且自动展开 hint[0]
+        assert_eq!(s(2), HintUnlockState { unlocked: 2, expanded: 0, show_reference: false });
+        // ≥3 次：全部解锁且自动推进到 hint[1]
+        assert_eq!(s(3), HintUnlockState { unlocked: 3, expanded: 1, show_reference: false });
+        // ≥4 次：推进到最后一条（hint[2]）+ 参考答案按钮
+        assert_eq!(s(4), HintUnlockState { unlocked: 3, expanded: 2, show_reference: true });
+        assert_eq!(s(9), HintUnlockState { unlocked: 3, expanded: 2, show_reference: true });
+    }
+
+    #[test]
+    fn hint_unlock_state_default_table_clamps_to_hint_count() {
+        // 2 条提示 + [1,3,5]（数据仅作防御）：unlocked/expanded 钳制在 len 内
+        let s = |fc| hint_unlock_state(2, &[1, 3, 5], fc).unwrap();
+        assert_eq!(s(2), HintUnlockState { unlocked: 2, expanded: 0, show_reference: false });
+        assert_eq!(s(4), HintUnlockState { unlocked: 2, expanded: 1, show_reference: true });
+        // 单条提示
+        let s1 = |fc| hint_unlock_state(1, &[1, 3, 5], fc).unwrap();
+        assert_eq!(s1(4), HintUnlockState { unlocked: 1, expanded: 0, show_reference: true });
+    }
+
+    #[test]
+    fn hint_unlock_state_custom_thresholds_per_threshold() {
+        // 自定义阈值 [2,4,6]：逐阈值解锁，展开到「已解锁且阈值 ≤ fc」的最高索引
+        let s = |fc| hint_unlock_state(3, &[2, 4, 6], fc).unwrap();
+        assert_eq!(s(0), HintUnlockState { unlocked: 0, expanded: 0, show_reference: false });
+        assert_eq!(s(1), HintUnlockState { unlocked: 0, expanded: 0, show_reference: false });
+        assert_eq!(s(2), HintUnlockState { unlocked: 1, expanded: 0, show_reference: false });
+        assert_eq!(s(4), HintUnlockState { unlocked: 2, expanded: 1, show_reference: true });
+        assert_eq!(s(6), HintUnlockState { unlocked: 3, expanded: 2, show_reference: true });
+    }
+
+    #[test]
+    fn hint_unlock_state_none_when_manual_mode() {
+        // 无 hint_unlock（旧 TOML）：None → UI 保持手动逐级揭示
+        assert_eq!(hint_unlock_state(3, &[], 4), None);
+        assert_eq!(hint_unlock_state(0, &[], 0), None);
+        // 无 hints 时也返回 None（防御，validate 已保证 hint_unlock 与 hints 等长）
+        assert_eq!(hint_unlock_state(0, &[1, 3, 5], 4), None);
+    }
+
+    #[test]
+    fn reveal_hint_records_dedup_sorted() {
+        let mut e = engine();
+        e.new_game();
+        // 乱序 + 重复：去重且升序
+        assert!(e.reveal_hint("l0-hello", 1));
+        assert!(e.reveal_hint("l0-hello", 0));
+        assert!(!e.reveal_hint("l0-hello", 1), "重复查看幂等");
+        assert_eq!(e.save.level_states.get("l0-hello").unwrap().hints_used, vec![0, 1]);
+        // 不存在的关卡 id：自动补默认进度（不 panic）
+        assert!(e.reveal_hint("unknown-level", 2));
+        assert_eq!(e.save.level_states.get("unknown-level").unwrap().hints_used, vec![2]);
+    }
+
+    #[test]
+    fn reveal_hint_is_zero_cost() {
+        let mut e = engine();
+        e.new_game();
+        e.start_level(0).unwrap();
+        // 失败一次建立 fail_count 基线
+        e.submit("fn main() { println!(\"wrong\"); }").unwrap();
+        let before = e.save.clone();
+        let p = e.save.level_states.get("l0-hello").unwrap();
+        assert_eq!(p.fail_count, 1);
+        assert!(p.hints_used.is_empty());
+        // 查看 hint：心/XP/fail_count/attempts 全部不变
+        e.reveal_hint("l0-hello", 0);
+        let after = e.save.level_states.get("l0-hello").unwrap();
+        assert_eq!(after.hints_used, vec![0], "查看被记录");
+        assert_eq!(e.save.hearts, before.hearts, "查看 hint 不扣心");
+        assert_eq!(e.save.xp, before.xp, "查看 hint 不扣 XP");
+        assert_eq!(after.fail_count, before.level_states.get("l0-hello").unwrap().fail_count, "fail_count 不变");
+        assert_eq!(after.attempts, before.level_states.get("l0-hello").unwrap().attempts, "attempts 不变");
+    }
+
+    #[test]
+    fn no_hint_perfect_ordering_hint_before_pass() {
+        // 先看 hint 再首提交即通过（fail_count==0，本可完美）→ 不触发 no_hint_perfect
+        let mut e = engine();
+        e.new_game();
+        e.start_level(0).unwrap();
+        e.reveal_hint("l0-hello", 0);
+        e.submit("fn main() { println!(\"x has the value {}\", 5); }").unwrap();
+        assert_eq!(e.save.level_states.get("l0-hello").unwrap().fail_count, 0, "查看 hint 不改 fail_count");
+        assert!(!e.save.achievements.contains("no_hint_perfect"), "看过 hint 后完美通关也不应无师自通");
+    }
+
+    #[test]
+    fn no_hint_perfect_ordering_hint_after_pass() {
+        // 先完美通关（hints_used 空 → 无师自通已发），之后再查看 hint → 成就不撤回
+        let mut e = engine();
+        e.new_game();
+        e.start_level(0).unwrap();
+        e.submit("fn main() { println!(\"x has the value {}\", 5); }").unwrap();
+        assert!(e.save.achievements.contains("no_hint_perfect"));
+        e.reveal_hint("l0-hello", 0);
+        e.submit("fn main() { println!(\"x has the value {}\", 5); }").unwrap();
+        assert!(e.save.achievements.contains("no_hint_perfect"), "已发成就不因后看 hint 撤回");
     }
 }

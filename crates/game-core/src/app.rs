@@ -1,4 +1,4 @@
-use crate::engine::Engine;
+use crate::engine::{hint_unlock_state, Engine};
 use crate::error::GameError;
 use crate::level::Level;
 use crate::save::{LevelState, SaveData};
@@ -54,6 +54,8 @@ pub struct LevelData {
     pub index: usize,
     /// P1-03：返回编辑后底部固定的反馈面板（上次提交失败时 Some，底部固定保留）
     pub feedback: Option<FeedbackData>,
+    /// P2-11：参考答案（最后一条 hint = 解法级修复代码）是否已二次确认展示
+    pub reference_revealed: bool,
 }
 
 impl LevelData {
@@ -102,13 +104,16 @@ pub struct GameApp {
     pub engine: Engine,
     screen: Screen,
     last_level: Option<LevelData>,
+    /// P3-19：错误卡「第 N 行」点击 → 编辑器光标跳转目标（0-based 行号）。
+    /// UI 在应用到 TextEdit 光标后调用 `take_focus_line` 清除（一次性，避免重渲染反复跳回）。
+    pub focus_line: Option<usize>,
 }
 
 impl GameApp {
     pub fn new(mut engine: Engine) -> Self {
         engine.unlock_first();
         let screen = Self::build_map(&engine, 0);
-        Self { engine, screen, last_level: None }
+        Self { engine, screen, last_level: None, focus_line: None }
     }
 
     fn build_map(engine: &Engine, selected: usize) -> Screen {
@@ -151,8 +156,11 @@ impl GameApp {
             index,
             level,
             feedback: None,
+            reference_revealed: false,
         };
         self.last_level = Some(d.clone());
+        // P3-19：新进入关卡清除上次跳转目标（不同关的行号无意义）
+        self.focus_line = None;
         Ok(Screen::Level(d))
     }
 
@@ -167,6 +175,39 @@ impl GameApp {
     pub fn set_code(&mut self, code: String) {
         if let Screen::Level(d) = &mut self.screen {
             d.code = code;
+            self.last_level = Some(d.clone());
+        }
+    }
+
+    /// P3-19：错误卡「第 N 行」点击 → 记录跳转目标（0-based 行）并切回编辑器屏幕。
+    /// `one_based` 为 ErrorCard.line（rustc 1-based 行号）；越界行由编辑器端钳制到文件末尾。
+    /// 已在编辑器内（底部固定面板）时仅更新目标，不改屏幕；在 Feedback 屏时按
+    /// handle_feedback 的返回路径重建 Level 并保留反馈面板（底部固定不消失）。
+    pub fn jump_to_line(&mut self, one_based: u32) {
+        self.focus_line = Some(one_based.saturating_sub(1) as usize);
+        if let Screen::Feedback(f) = self.screen.clone() {
+            if let Some(mut prev) = self.last_level.clone() {
+                prev.feedback = Some(f);
+                self.screen = Screen::Level(prev);
+            }
+        }
+    }
+
+    /// P3-19：UI 在把光标应用到 TextEdit 后取走跳转目标（一次性：
+    /// 清除后重渲染不会反复跳回同一行）。
+    pub fn take_focus_line(&mut self) -> Option<usize> {
+        self.focus_line.take()
+    }
+
+    /// P2-11：二次确认「查看答案」→ 展示参考答案（最后一条 hint = 解法级修复代码）
+    /// 并记录查看（engine.reveal_hint，幂等；零成本：不扣心/XP、不改 fail_count）。
+    /// 拒绝路径不发此调用：弹窗关闭且不展示任何代码。
+    pub fn reveal_reference(&mut self) {
+        if let Screen::Level(d) = &mut self.screen {
+            d.reference_revealed = true;
+            if let Some(last) = d.level.hints.len().checked_sub(1) {
+                self.engine.reveal_hint(&d.level.id, last as u32);
+            }
             self.last_level = Some(d.clone());
         }
     }
@@ -279,6 +320,26 @@ impl GameApp {
                     if cur.level.hints.is_empty() {
                         // 无多级提示：保持原有开关行为
                         cur.show_hint = !cur.show_hint;
+                    } else if !cur.level.hint_unlock.is_empty() {
+                        // P2-11 联动模式：失败联动自动推进替代手动逐级——按键只开关面板；
+                        // 打开面板 = 查看当前自动展开的提示（记录 hints_used，幂等；零成本）
+                        cur.show_hint = !cur.show_hint;
+                        if cur.show_hint {
+                            let fail_count = self
+                                .engine
+                                .save
+                                .level_states
+                                .get(&cur.level.id)
+                                .map(|p| p.fail_count)
+                                .unwrap_or(0);
+                            if let Some(st) = hint_unlock_state(
+                                cur.level.hints.len(),
+                                &cur.level.hint_unlock,
+                                fail_count,
+                            ) {
+                                self.engine.reveal_hint(&cur.level.id, st.expanded as u32);
+                            }
+                        }
                     } else if !cur.show_hint {
                         // 首次按下：显示第一条
                         cur.show_hint = true;
@@ -675,6 +736,200 @@ source = "rustlings"
         match a.screen() {
             Screen::ChapterMap(m) => assert!(m.entries[0].state == LevelState::Passed),
             other => panic!("expected ChapterMap, got {:?}", other),
+        }
+    }
+
+    // ===== P2-11：hint 失败联动（app 层接线）=====
+
+    const LEVELS_HINTS_UNLOCK: &str = r#"
+[[level]]
+id = "h-unlock"
+title = "unlock-hint"
+tier = "l1"
+description = "d"
+hints = ["第一级提示", "第二级提示", "第三级提示"]
+hint_unlock = [1, 3, 5]
+starter_code = "fn main() { println!(\"x has the value {}\", 5); }"
+expect_output = "x has the value 5"
+source = "rustlings"
+"#;
+
+    fn unlock_hint_app() -> GameApp {
+        let set = LevelSet { levels: parse_levels(LEVELS_HINTS_UNLOCK).unwrap() };
+        let engine = Engine::new(set, Default::default(), ErrorMapper::default_fallback(), Box::new(DevSandbox::new()));
+        GameApp::new(engine)
+    }
+
+    fn set_fail_count(a: &mut GameApp, level_id: &str, fail_count: u32) {
+        a.engine
+            .save
+            .level_states
+            .entry(level_id.into())
+            .or_default()
+            .fail_count = fail_count;
+    }
+
+    #[test]
+    fn hint_input_unlock_mode_toggles_and_records_expanded() {
+        let mut a = unlock_hint_app();
+        a.handle(Input::Enter).unwrap(); // 进入关卡
+        // fc=1：expanded=0 → 打开面板记录 hint[0]
+        set_fail_count(&mut a, "h-unlock", 1);
+        a.handle(Input::Hint).unwrap();
+        let d = level_screen(&a);
+        assert!(d.show_hint, "联动模式按键打开面板");
+        assert_eq!(
+            a.engine.save.level_states.get("h-unlock").unwrap().hints_used,
+            vec![0],
+            "打开面板 = 查看当前自动展开的提示"
+        );
+        // 再按 → 关闭面板
+        a.handle(Input::Hint).unwrap();
+        assert!(!level_screen(&a).show_hint);
+        // 重复打开：幂等（已记录不重复）
+        a.handle(Input::Hint).unwrap();
+        assert_eq!(a.engine.save.level_states.get("h-unlock").unwrap().hints_used, vec![0]);
+    }
+
+    #[test]
+    fn hint_input_unlock_mode_high_fail_records_last_hint() {
+        let mut a = unlock_hint_app();
+        a.handle(Input::Enter).unwrap();
+        // fc=4：expanded=最后一条（hint[2]）→ 打开面板记录 hint[2]
+        set_fail_count(&mut a, "h-unlock", 4);
+        a.handle(Input::Hint).unwrap();
+        assert_eq!(
+            a.engine.save.level_states.get("h-unlock").unwrap().hints_used,
+            vec![2],
+            "fc≥4 打开面板记录最后一条"
+        );
+    }
+
+    #[test]
+    fn hint_input_manual_stepping_unchanged_without_hint_unlock() {
+        // 回归：无 hint_unlock 时手动逐级行为与 P1 完全一致（hint_step 步进）
+        let mut a = hint_app();
+        a.handle(Input::Enter).unwrap();
+        a.handle(Input::Hint).unwrap();
+        assert_eq!(level_screen(&a).visible_hint(), Some(("第一级提示", 1, 3)));
+        a.handle(Input::Hint).unwrap();
+        assert_eq!(level_screen(&a).visible_hint(), Some(("第二级提示", 2, 3)));
+        a.handle(Input::Hint).unwrap();
+        assert_eq!(level_screen(&a).visible_hint(), Some(("第三级提示", 3, 3)));
+        a.handle(Input::Hint).unwrap();
+        assert!(!level_screen(&a).show_hint);
+        assert!(a.engine.save.level_states.get("h-multi").map(|p| p.hints_used.is_empty()).unwrap_or(true),
+            "手动模式不写 hints_used（保持 P1 行为，不影响 no_hint_perfect）");
+    }
+
+    #[test]
+    fn reveal_reference_shows_last_hint_and_records_view() {
+        let mut a = unlock_hint_app();
+        a.handle(Input::Enter).unwrap();
+        set_fail_count(&mut a, "h-unlock", 4);
+        // 确认前：未展示、未记录
+        assert!(!level_screen(&a).reference_revealed);
+        a.reveal_reference();
+        let d = level_screen(&a);
+        assert!(d.reference_revealed, "确认后标记展示参考答案");
+        assert_eq!(
+            a.engine.save.level_states.get("h-unlock").unwrap().hints_used,
+            vec![2],
+            "参考答案 = 最后一条 hint（解法级修复代码）"
+        );
+        // 幂等：重复确认不重复记录
+        a.reveal_reference();
+        assert_eq!(a.engine.save.level_states.get("h-unlock").unwrap().hints_used, vec![2]);
+    }
+
+    #[test]
+    fn reveal_reference_zero_cost() {
+        let mut a = unlock_hint_app();
+        a.handle(Input::Enter).unwrap();
+        set_fail_count(&mut a, "h-unlock", 4);
+        let hearts = a.engine.save.hearts;
+        let xp = a.engine.save.xp;
+        a.reveal_reference();
+        assert_eq!(a.engine.save.hearts, hearts, "参考答案不扣心");
+        assert_eq!(a.engine.save.xp, xp, "参考答案不扣 XP");
+        assert_eq!(a.engine.save.level_states.get("h-unlock").unwrap().fail_count, 4, "fail_count 不变");
+    }
+
+    // ===== P3-19：行号跳转编辑器（app 层状态）=====
+
+    #[test]
+    fn line_click_returns_to_level_with_focus_and_panel() {
+        let mut a = app();
+        a.handle(Input::Enter).unwrap(); // 进入第一关
+        // 制造失败反馈
+        a.set_code("fn main() { println!(\"wrong\"); }".into());
+        a.handle(Input::Submit).unwrap();
+        assert!(matches!(a.screen(), Screen::Feedback(_)));
+        // 点击「第 4 行」→ 回到编辑器 + 光标目标 0-based 3 + 反馈面板保留
+        a.jump_to_line(4);
+        assert_eq!(a.focus_line, Some(3), "1-based 行号转 0-based");
+        match a.screen() {
+            Screen::Level(d) => {
+                assert!(d.feedback.is_some(), "跳转后面板保留（底部固定）");
+                assert_eq!(d.code, "fn main() { println!(\"wrong\"); }", "代码保留");
+            }
+            other => panic!("expected Level, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn line_click_in_editor_sets_focus_only() {
+        let mut a = app();
+        a.handle(Input::Enter).unwrap(); // 已在编辑器
+        a.jump_to_line(5);
+        assert_eq!(a.focus_line, Some(4));
+        assert!(matches!(a.screen(), Screen::Level(_)), "编辑器内点击不切屏");
+    }
+
+    #[test]
+    fn line_none_not_clickable_no_state_change() {
+        // line=None（EUNKNOWN 无 --> 行）：不设置任何跳转状态（UI 侧不渲染可点击行号）
+        let mut a = app();
+        a.handle(Input::Enter).unwrap();
+        // 模拟 UI 只在 card.line.is_some() 时调用 jump_to_line——这里验证零调用路径等价
+        assert_eq!(a.focus_line, None);
+        assert!(matches!(a.screen(), Screen::Level(_)));
+    }
+
+    #[test]
+    fn consecutive_line_clicks_switch_focus() {
+        let mut a = app();
+        a.handle(Input::Enter).unwrap();
+        a.jump_to_line(2); // 第 2 行
+        assert_eq!(a.focus_line, Some(1));
+        a.jump_to_line(9); // 第 9 行
+        assert_eq!(a.focus_line, Some(8), "连续点击不同错误 → 光标目标切换");
+        // 越界行（超出代码行数）：目标仍记录，编辑器端钳制到文件末尾
+        a.jump_to_line(u32::MAX);
+        assert_eq!(a.focus_line, Some(u32::MAX as usize - 1));
+    }
+
+    #[test]
+    fn take_focus_line_clears_after_apply() {
+        let mut a = app();
+        a.handle(Input::Enter).unwrap();
+        a.jump_to_line(3);
+        assert_eq!(a.take_focus_line(), Some(2), "UI 应用后取走目标");
+        assert_eq!(a.focus_line, None, "一次性：清除后不反复跳回");
+        assert_eq!(a.take_focus_line(), None);
+    }
+
+    #[test]
+    fn build_level_resets_focus_line_and_reference() {
+        let mut a = app();
+        a.handle(Input::Enter).unwrap();
+        a.focus_line = Some(5);
+        a.handle(Input::Esc).unwrap(); // 回地图
+        a.handle(Input::Enter).unwrap(); // 重进关卡（build_level）
+        assert_eq!(a.focus_line, None, "重进关卡清除跳转目标");
+        match a.screen() {
+            Screen::Level(d) => assert!(!d.reference_revealed, "重进关卡参考答案未确认"),
+            other => panic!("expected Level, got {other:?}"),
         }
     }
 }
