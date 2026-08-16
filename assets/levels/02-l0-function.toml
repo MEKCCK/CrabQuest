@@ -2,12 +2,17 @@
 id = "l0-function"
 title = "定义函数"
 tier = "l0"
-description = "main 调用了 call_me，但它还不存在。定义一个打印 Call me 的 call_me 函数。"
-hint = "在 main 下方定义 fn call_me() { println!(\"Call me\"); }"
+description = "代码无法编译：main 调用了尚未定义的函数。目标输出「Call me」。涉及概念：函数定义与调用。"
+hint = "函数需要先定义，才能被调用。"
+hints = [
+  "被调用的函数必须先定义，调用处才能找到它。",
+  "错误 E0425：call_me 未定义。见 book-cn ch03-03「函数」：https://rustwiki.org/zh-CN/book/ch03-03-how-functions-work.html",
+  "fn call_me() { println!(\"Call me\"); }",
+]
 starter_code = '''
 fn main() {
     call_me();
 }
 '''
 expect_output = "Call me"
-source = "rustlings (functions1)"
+source = "rustlings (exercises/02_functions/functions1.rs, v6.5.0, MIT)"

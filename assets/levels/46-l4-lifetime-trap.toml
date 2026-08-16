@@ -1,0 +1,23 @@
+[[level]]
+id = "l4-lifetime-trap"
+title = "挑战：借用的存活范围"
+tier = "l4"
+description = "s 借用了一个在花括号内就释放的值，代码无法编译。目标输出「hi」。涉及概念：悬垂引用。"
+hint = "引用不能指向比自己先释放的数据。"
+hints = [
+  "引用不能指向比自己先释放的数据。",
+  "错误 E0597：t 在块结束时释放而 s 仍借用。见 book-cn ch10-03「生命周期与引用有效性」：https://rustwiki.org/zh-CN/book/ch10-03-lifetime-syntax.html",
+  "let t = String::from(\"hi\");\nlet s;\n把 t 的声明移到块外，使其存活覆盖 s 的使用。",
+]
+starter_code = '''
+fn main() {
+    let s;
+    {
+        let t = String::from("hi");
+        s = &t;
+    }
+    println!("{}", s);
+}
+'''
+expect_output = "hi"
+source = "rust-quiz (questions/037-lifetime-extension.rs, CC BY-SA 4.0，主题改编，解释自写)"

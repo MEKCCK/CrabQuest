@@ -1,0 +1,32 @@
+[[level]]
+id = "l3-lifetime"
+title = "生命周期标注"
+tier = "l3"
+description = "longest 返回引用缺生命周期标注，无法编译。目标输出「The longest string is 'long string is long'」。涉及概念：生命周期标注。"
+hint = "返回的引用必须与输入参数建立生命周期联系。"
+hints = [
+  "返回的引用必须与输入参数建立生命周期联系。",
+  "错误 E0106：缺少生命周期标注。见 book-cn ch10-03「生命周期与引用有效性」：https://rustwiki.org/zh-CN/book/ch10-03-lifetime-syntax.html",
+  "fn longest<'a>(x: &'a str, y: &'a str) -> &'a str\n用同一个 'a 连接输入与返回。",
+]
+starter_code = '''
+fn main() {
+    let string1 = String::from("long string is long");
+    let result;
+    {
+        let string2 = String::from("xyz");
+        result = longest(string1.as_str(), string2.as_str());
+        println!("The longest string is '{}'", result);
+    }
+}
+
+fn longest(x: &str, y: &str) -> &str {
+    if x.len() > y.len() {
+        x
+    } else {
+        y
+    }
+}
+'''
+expect_output = "The longest string is 'long string is long'"
+source = "rustlings (exercises/16_lifetimes/lifetimes1.rs, v6.5.0, MIT) + The Rust Book (ch10-03, 生命周期示例, MIT/Apache-2.0，混合改编)"

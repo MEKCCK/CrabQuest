@@ -1,0 +1,24 @@
+[[level]]
+id = "l1-borrow"
+title = "借用而不是移动"
+tier = "l1"
+description = "calculate_length 拿走了 s 的所有权，main 中无法再用 s。目标输出「The length of 'hello' is 5.」。涉及概念：借用（引用）。"
+hint = "只读地使用数据不必拥有它，可以借用。"
+hints = [
+  "借用（引用）只临时访问数据，不拿走所有权。",
+  "错误 E0382：s 在传参时被移动。见 book-cn ch04-02「引用与借用」：https://rustwiki.org/zh-CN/book/ch04-02-references-and-borrowing.html",
+  "fn calculate_length(s: &String) -> usize\nlet len = calculate_length(&s);\n签名与调用处都改用引用 &。",
+]
+starter_code = '''
+fn main() {
+    let s = String::from("hello");
+    let len = calculate_length(s);
+    println!("The length of '{}' is {}.", s, len);
+}
+
+fn calculate_length(s: String) -> usize {
+    s.len()
+}
+'''
+expect_output = "The length of 'hello' is 5."
+source = "The Rust Book (ch04-02, 引用与借用, MIT/Apache-2.0)"
