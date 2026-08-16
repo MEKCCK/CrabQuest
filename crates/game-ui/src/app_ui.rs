@@ -6,6 +6,24 @@ use game_core::level::LevelTier;
 use game_core::ui::UiBackend;
 use macroquad::prelude::*;
 
+/// JetBrains Maple Mono（内嵌，SIL OFL 许可）——覆盖 CJK 统一表意区，保证中文正常渲染
+const MAPLE_FONT: &[u8] = include_bytes!("../assets/JetBrainsMapleMono-Regular.ttf");
+
+/// 把中文字体安装进 egui 字体系统：插入 Proportional / Monospace 家族首位，
+/// 中文与拉丁字符都用它渲染，缺失字形（如部分 emoji）回退到 egui 默认字体。
+fn install_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert(
+        "jetbrains_maple_mono".to_owned(),
+        std::sync::Arc::new(egui::FontData::from_static(MAPLE_FONT)),
+    );
+    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+        let list = fonts.families.entry(family).or_default();
+        list.insert(0, "jetbrains_maple_mono".to_owned());
+    }
+    ctx.set_fonts(fonts);
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Busy {
     None,
@@ -164,7 +182,7 @@ impl GameUi {
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("🗺️ 关卡地图");
+            ui.heading("🗺 关卡地图");
             ui.label("按 L0 → L4 顺序推进，解锁前一关后才能进入下一关。");
             ui.separator();
             egui::ScrollArea::vertical().show(ui, |ui| {
@@ -341,9 +359,14 @@ fn color_for(kind: TokenKind) -> egui::Color32 {
 
 impl UiBackend for GameUi {
     async fn run(&mut self, app: &mut GameApp) -> Result<(), GameError> {
+        let mut fonts_installed = false;
         loop {
             clear_background(Color::from_rgba(30, 30, 30, 255));
             egui_macroquad::ui(|ctx| {
+                if !fonts_installed {
+                    install_fonts(ctx);
+                    fonts_installed = true;
+                }
                 self.draw(ctx, app);
             });
             egui_macroquad::draw();
