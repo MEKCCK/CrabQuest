@@ -27,20 +27,22 @@ fn install_fonts(ctx: &egui::Context) {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Busy {
     None,
-    Show, // 显示「编译中」一帧
-    Do,   // 下一帧真正执行提交
+    Show(Input), // 显示「编译中」一帧
+    Do(Input),   // 下一帧真正执行提交
 }
 
 pub struct GameUi {
     code_buf: String,
     last_level_id: Option<String>,
+    /// 选择题当前选中的选项（0-based；非 quiz 关恒为 None）
+    quiz_sel: Option<usize>,
     busy: Busy,
     quit: bool,
 }
 
 impl GameUi {
     pub fn new() -> Self {
-        Self { code_buf: String::new(), last_level_id: None, busy: Busy::None, quit: false }
+        Self { code_buf: String::new(), last_level_id: None, quiz_sel: None, busy: Busy::None, quit: false }
     }
 
     /// 把 code_buf 回写进 app（TextEdit 每次改动后调用）
@@ -62,25 +64,26 @@ impl GameUi {
 
     fn draw(&mut self, ctx: &egui::Context, app: &mut GameApp) {
         let screen = app.screen().clone();
-        // 进入新关卡时同步 code_buf
+        // 进入新关卡时同步 code_buf 与选择题选中态
         if let Screen::Level(d) = &screen {
             if self.last_level_id.as_deref() != Some(d.level.id.as_str()) {
                 self.code_buf = d.code.clone();
+                self.quiz_sel = None;
                 self.last_level_id = Some(d.level.id.clone());
             }
         } else {
             self.last_level_id = None;
         }
         match self.busy {
-            Busy::Show => {
+            Busy::Show(input) => {
                 self.draw_busy(ctx);
-                self.busy = Busy::Do;
+                self.busy = Busy::Do(input);
                 return;
             }
-            Busy::Do => {
+            Busy::Do(input) => {
                 self.draw_busy(ctx);
                 self.busy = Busy::None;
-                self.act(app, Input::Submit);
+                self.act(app, input);
                 return;
             }
             Busy::None => {}
@@ -254,47 +257,25 @@ impl GameUi {
                 ui.colored_label(egui::Color32::from_rgb(255, 200, 80), label);
             }
             ui.separator();
-            ui.horizontal(|ui| {
-                // 行号 gutter（对齐用 monospace 字体）
-                let line_count = self.code_buf.lines().count().max(1);
-                let gutter = (1..=line_count).map(|n| n.to_string()).collect::<Vec<_>>().join("\n");
-                ui.add(
-                    egui::Label::new(
-                        egui::RichText::new(gutter).monospace().color(egui::Color32::from_rgb(120, 120, 120)),
-                    )
-                    .selectable(false),
-                );
-                // 编辑器
-                let mut layouter = |ui: &egui::Ui, text: &str, _wrap_width: f32| {
-                    let mut job = egui::text::LayoutJob::default();
-                    for span in tokenize(text) {
-                        job.append(
-                            &text[span.start..span.end],
-                            0.0,
-                            egui::TextFormat {
-                                font_id: egui::FontId::monospace(14.0),
-                                color: color_for(span.kind),
-                                ..Default::default()
-                            },
-                        );
-                    }
-                    ui.fonts(|f| f.layout_job(job))
-                };
-                let resp = ui.add(
-                    egui::TextEdit::multiline(&mut self.code_buf)
-                        .font(egui::TextStyle::Monospace)
-                        .desired_rows(20)
-                        .desired_width(f32::INFINITY)
-                        .layouter(&mut layouter),
-                );
-                if resp.changed() {
-                    self.sync_code(app);
-                }
-            });
+            if d.level.kind == "quiz" {
+                self.draw_quiz_body(ui, d);
+            } else {
+                self.draw_code_body(ui, app);
+            }
             ui.separator();
             ui.horizontal(|ui| {
-                if ui.button("▶ 提交运行").clicked() {
-                    self.busy = Busy::Show;
+                if d.level.kind == "quiz" {
+                    let can_submit = self.quiz_sel.is_some();
+                    if ui.add_enabled(can_submit, egui::Button::new("✅ 提交选择")).clicked() {
+                        if let Some(sel) = self.quiz_sel {
+                            self.busy = Busy::Show(Input::SubmitQuiz(sel as u32));
+                        }
+                    }
+                    if !can_submit {
+                        ui.label(egui::RichText::new("请先选择一个选项").weak());
+                    }
+                } else if ui.button("▶ 提交运行").clicked() {
+                    self.busy = Busy::Show(Input::Submit);
                 }
                 let hint_label = match d.visible_hint() {
                     Some((_, cur, total)) if total > 1 => format!("💡 提示 {cur}/{total}"),
@@ -303,12 +284,81 @@ impl GameUi {
                 if ui.button(hint_label).clicked() {
                     self.act(app, Input::Hint);
                 }
-                if ui.button("↺ 重置代码").clicked() {
+                if d.level.kind != "quiz" && ui.button("↺ 重置代码").clicked() {
                     self.act(app, Input::Reset);
                     self.last_level_id = None; // 下一帧重新同步 starter_code
                 }
             });
         });
+    }
+
+    /// 普通关：可编辑代码编辑器（语法高亮 + 行号 gutter）
+    fn draw_code_body(&mut self, ui: &mut egui::Ui, app: &mut GameApp) {
+        ui.horizontal(|ui| {
+            // 行号 gutter（对齐用 monospace 字体）
+            let line_count = self.code_buf.lines().count().max(1);
+            let gutter = (1..=line_count).map(|n| n.to_string()).collect::<Vec<_>>().join("\n");
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(gutter).monospace().color(egui::Color32::from_rgb(120, 120, 120)),
+                )
+                .selectable(false),
+            );
+            // 编辑器
+            let mut layouter = |ui: &egui::Ui, text: &str, _wrap_width: f32| {
+                let mut job = egui::text::LayoutJob::default();
+                for span in tokenize(text) {
+                    job.append(
+                        &text[span.start..span.end],
+                        0.0,
+                        egui::TextFormat {
+                            font_id: egui::FontId::monospace(14.0),
+                            color: color_for(span.kind),
+                            ..Default::default()
+                        },
+                    );
+                }
+                ui.fonts(|f| f.layout_job(job))
+            };
+            let resp = ui.add(
+                egui::TextEdit::multiline(&mut self.code_buf)
+                    .font(egui::TextStyle::Monospace)
+                    .desired_rows(20)
+                    .desired_width(f32::INFINITY)
+                    .layouter(&mut layouter),
+            );
+            if resp.changed() {
+                self.sync_code(app);
+            }
+        });
+    }
+
+    /// quiz 关：只读展示代码 + 选项列表（玩家不可编辑展示代码）
+    fn draw_quiz_body(&mut self, ui: &mut egui::Ui, d: &LevelData) {
+        ui.label(egui::RichText::new("📜 展示代码（只读，可选中复制）").weak());
+        let line_count = d.level.starter_code.lines().count().max(1);
+        let gutter = (1..=line_count).map(|n| n.to_string()).collect::<Vec<_>>().join("\n");
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(gutter).monospace().color(egui::Color32::from_rgb(120, 120, 120)),
+                    )
+                    .selectable(false),
+                );
+                ui.add(
+                    egui::Label::new(egui::RichText::new(&d.level.starter_code).monospace())
+                        .selectable(true),
+                );
+            });
+        });
+        ui.add_space(10.0);
+        ui.label(egui::RichText::new("🤔 程序运行后会输出什么？").strong());
+        for (i, opt) in d.level.options.iter().enumerate() {
+            if ui.selectable_label(self.quiz_sel == Some(i), format!("{}. {}", i + 1, opt)).clicked() {
+                self.quiz_sel = Some(i);
+            }
+        }
     }
 
     fn draw_feedback(&mut self, ctx: &egui::Context, app: &mut GameApp, f: &FeedbackData) {
@@ -453,5 +503,42 @@ mod tests {
             Screen::Level(d) => assert_eq!(d.code, "fn main() { println!(\"edited\"); }"),
             other => panic!("expected Level, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn renders_quiz_level_with_options() {
+        let levels = parse_levels(
+            r#"
+[[level]]
+id = "q"
+title = "q"
+tier = "l4"
+kind = "quiz"
+description = "d"
+starter_code = "fn main() { print!(\"1\"); }"
+options = ["0", "1", "编译错误", "不确定"]
+answer_index = 1
+source = "s"
+"#,
+        )
+        .unwrap();
+        let engine = Engine::new(
+            LevelSet { levels },
+            Default::default(),
+            ErrorMapper::default_fallback(),
+            Box::new(DevSandbox::new()),
+        );
+        let mut app = GameApp::new(engine);
+        let mut ui = GameUi::new();
+        // 进入关卡并渲染 quiz 界面（只读展示代码 + 选项）不崩溃
+        let ctx = egui::Context::default();
+        app.handle(Input::Enter).unwrap();
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            ui.draw(ctx, &mut app);
+        });
+        assert!(matches!(app.screen(), Screen::Level(_)));
+        // 展示代码同步进缓冲区但不渲染为可编辑 TextEdit（只读展示），quiz_sel 初始未选中
+        assert_eq!(ui.code_buf, "fn main() { print!(\"1\"); }");
+        assert_eq!(ui.quiz_sel, None);
     }
 }

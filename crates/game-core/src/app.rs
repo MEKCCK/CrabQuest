@@ -11,6 +11,8 @@ pub enum Input {
     Enter,
     Esc,
     Submit,
+    /// 选择题提交：携带玩家选择的选项索引（0-based）
+    SubmitQuiz(u32),
     Hint,
     Reset,
 }
@@ -158,6 +160,28 @@ impl GameApp {
         }
     }
 
+    /// 把校验结果统一转为反馈面板（普通关与 quiz 关共用）
+    fn apply_validation(&mut self, d: &LevelData, result: Validation) {
+        match result {
+            Validation::Pass => {
+                self.screen = Screen::Feedback(FeedbackData {
+                    passed: true,
+                    level_id: d.level.id.clone(),
+                    feedback: Vec::new(),
+                    xp_gained: XP_PER_PASS,
+                });
+            }
+            Validation::Fail { feedback } => {
+                self.screen = Screen::Feedback(FeedbackData {
+                    passed: false,
+                    level_id: d.level.id.clone(),
+                    feedback,
+                    xp_gained: 0,
+                });
+            }
+        }
+    }
+
     pub fn handle(&mut self, input: Input) -> Result<GameFlow, GameError> {
         match self.screen.clone() {
             Screen::Menu(m) => self.handle_menu(m, input),
@@ -225,24 +249,11 @@ impl GameApp {
         match input {
             Input::Submit => {
                 let result = self.engine.submit(&d.code)?;
-                match result {
-                    Validation::Pass => {
-                        self.screen = Screen::Feedback(FeedbackData {
-                            passed: true,
-                            level_id: d.level.id.clone(),
-                            feedback: Vec::new(),
-                            xp_gained: XP_PER_PASS,
-                        });
-                    }
-                    Validation::Fail { feedback } => {
-                        self.screen = Screen::Feedback(FeedbackData {
-                            passed: false,
-                            level_id: d.level.id.clone(),
-                            feedback,
-                            xp_gained: 0,
-                        });
-                    }
-                }
+                self.apply_validation(&d, result);
+            }
+            Input::SubmitQuiz(answer) => {
+                let result = self.engine.submit_quiz(answer)?;
+                self.apply_validation(&d, result);
             }
             Input::Hint => {
                 if let Screen::Level(cur) = &mut self.screen {
