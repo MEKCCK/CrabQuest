@@ -230,25 +230,47 @@ impl GameUi {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("🗺 关卡地图");
             ui.label("按 L0 → L4 顺序推进，解锁前一关后才能进入下一关。");
+            // P4-26：自定义关卡加载失败 → 游戏内提示（启动日志已另行打印，游戏不崩溃）
+            if !app.custom_load_errors.is_empty() {
+                ui.add_space(6.0);
+                egui::Frame::NONE
+                    .fill(egui::Color32::from_rgb(66, 30, 30))
+                    .corner_radius(4)
+                    .inner_margin(8.0)
+                    .show(ui, |ui| {
+                        ui.label(
+                            egui::RichText::new("⚠️ 自定义关卡加载失败：")
+                                .strong()
+                                .color(egui::Color32::from_rgb(255, 150, 130)),
+                        );
+                        for e in &app.custom_load_errors {
+                            ui.label(
+                                egui::RichText::new(e).color(egui::Color32::from_rgb(225, 170, 160)),
+                            );
+                        }
+                    });
+            }
             ui.separator();
             egui::ScrollArea::vertical().show(ui, |ui| {
                 let mut clicked: Option<usize> = None;
-                for (i, entry) in m.entries.iter().enumerate() {
-                    let (icon, state_str) = match entry.state {
-                        game_core::save::LevelState::Passed => ("✅", "已通关"),
-                        game_core::save::LevelState::Unlocked => ("🔓", "可挑战"),
-                        game_core::save::LevelState::Locked => ("🔒", "未解锁"),
-                    };
-                    let tier = match entry.level.tier {
-                        LevelTier::L0 => "L0 入门",
-                        LevelTier::L1 => "L1 所有权",
-                        LevelTier::L2 => "L2 集合/错误",
-                        LevelTier::L3 => "L3 生命周期/trait",
-                        LevelTier::L4 => "L4 挑战",
-                    };
-                    let text = format!("{icon} {}. {}（{tier}）{state_str}", i + 1, entry.level.title);
+                // 内置章节（线性推进；进度/成就/段位以本节为准）
+                for (i, entry) in m.entries.iter().enumerate().take(m.custom_start) {
+                    let text = Self::map_entry_text(entry, i + 1);
                     if ui.selectable_label(m.selected == i, text).clicked() {
                         clicked = Some(i);
+                    }
+                }
+                // P4-26：自定义章节独立显示（仅当存在自定义关卡时出现）
+                if m.custom_start < m.entries.len() {
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.heading("⭐ 自定义关卡");
+                    ui.label("自定义关卡进度独立保存，不影响内置成就与段位。");
+                    for (i, entry) in m.entries.iter().enumerate().skip(m.custom_start) {
+                        let text = Self::map_entry_text(entry, i - m.custom_start + 1);
+                        if ui.selectable_label(m.selected == i, text).clicked() {
+                            clicked = Some(i);
+                        }
                     }
                 }
                 if let Some(target) = clicked {
@@ -270,6 +292,23 @@ impl GameUi {
                 }
             });
         });
+    }
+
+    /// P4-26：地图条目文案（图标 + 章节内序号 + 标题 + 难度层 + 状态）
+    fn map_entry_text(entry: &game_core::app::MapEntry, number: usize) -> String {
+        let (icon, state_str) = match entry.state {
+            game_core::save::LevelState::Passed => ("✅", "已通关"),
+            game_core::save::LevelState::Unlocked => ("🔓", "可挑战"),
+            game_core::save::LevelState::Locked => ("🔒", "未解锁"),
+        };
+        let tier = match entry.level.tier {
+            LevelTier::L0 => "L0 入门",
+            LevelTier::L1 => "L1 所有权",
+            LevelTier::L2 => "L2 集合/错误",
+            LevelTier::L3 => "L3 生命周期/trait",
+            LevelTier::L4 => "L4 挑战",
+        };
+        format!("{icon} {number}. {}（{tier}）{state_str}", entry.level.title)
     }
 
     fn draw_level(&mut self, ctx: &egui::Context, app: &mut GameApp, d: &LevelData) {
@@ -1696,5 +1735,75 @@ mod tests {
         assert!(shapes_contain_text(&out.shapes, "💡 提示 3/3: 解法"), "hint3 列出（fc=3 全解锁）");
         // fc=3 无参考答案按钮
         assert!(!shapes_contain_text(&out.shapes, "查看参考答案"));
+    }
+
+    // ===== P4-26：自定义关卡章节（地图渲染 + 游戏内错误提示）=====
+
+    fn custom_map_app() -> GameApp {
+        let levels = parse_levels(
+            "[[level]]\nid = \"b1\"\ntitle = \"内置一\"\ntier = \"l0\"\ndescription = \"d\"\nstarter_code = \"fn main() { println!(1); }\"\nexpect_output = \"1\"\nsource = \"x\"\n",
+        )
+        .unwrap();
+        let custom = parse_levels(
+            "[[level]]\nid = \"c1\"\ntitle = \"自定义关一\"\ntier = \"l0\"\ndescription = \"d\"\nstarter_code = \"fn main() { println!(2); }\"\nexpect_output = \"2\"\nsource = \"community\"\n",
+        )
+        .unwrap();
+        let engine = Engine::with_custom_levels(
+            LevelSet { levels },
+            custom,
+            SaveData::default(),
+            ErrorMapper::default_fallback(),
+            Box::new(DevSandbox::new()),
+        );
+        GameApp::new(engine)
+    }
+
+    #[test]
+    fn map_shows_custom_section_when_custom_levels_exist() {
+        let ctx = egui::Context::default();
+        let mut app = custom_map_app();
+        let mut ui = GameUi::new();
+        let out = ctx.run(egui::RawInput::default(), |ctx| {
+            ui.draw(ctx, &mut app);
+        });
+        assert!(shapes_contain_text(&out.shapes, "自定义关卡"), "存在自定义关卡时应显示章节标题");
+        assert!(shapes_contain_text(&out.shapes, "自定义关一"), "自定义关卡条目应渲染");
+        assert!(shapes_contain_text(&out.shapes, "内置一"), "内置关卡条目应渲染");
+        // 章节内序号从 1 开始：自定义关一 → 「1. 自定义关一」
+        assert!(shapes_contain_text(&out.shapes, "1. 自定义关一"), "自定义章节内序号应从 1 开始");
+    }
+
+    #[test]
+    fn map_hides_custom_section_without_custom_levels() {
+        let ctx = egui::Context::default();
+        let mut app = test_app(); // 无自定义关卡
+        let mut ui = GameUi::new();
+        let out = ctx.run(egui::RawInput::default(), |ctx| {
+            ui.draw(ctx, &mut app);
+        });
+        assert!(!shapes_contain_text(&out.shapes, "自定义关卡"), "无自定义关卡时隐藏章节");
+    }
+
+    #[test]
+    fn map_surfaces_custom_load_errors_in_game() {
+        let ctx = egui::Context::default();
+        let levels = parse_levels(
+            "[[level]]\nid = \"b1\"\ntitle = \"内置一\"\ntier = \"l0\"\ndescription = \"d\"\nstarter_code = \"fn main() { println!(1); }\"\nexpect_output = \"1\"\nsource = \"x\"\n",
+        )
+        .unwrap();
+        let engine = Engine::new(
+            LevelSet { levels },
+            SaveData::default(),
+            ErrorMapper::default_fallback(),
+            Box::new(DevSandbox::new()),
+        );
+        let errs = vec!["自定义关卡 bad.toml 加载失败：TOML 解析失败：xxx".to_string()];
+        let mut app = GameApp::with_custom_load_errors(engine, errs);
+        let mut ui = GameUi::new();
+        let out = ctx.run(egui::RawInput::default(), |ctx| {
+            ui.draw(ctx, &mut app);
+        });
+        assert!(shapes_contain_text(&out.shapes, "自定义关卡加载失败"), "地图页应显示加载失败警示");
+        assert!(shapes_contain_text(&out.shapes, "bad.toml"), "警示内容含文件名");
     }
 }

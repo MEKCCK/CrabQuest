@@ -15,7 +15,10 @@ pub mod validate;
 
 pub use app::{ChapterMapData, FeedbackData, GameApp, GameFlow, Input, LevelData, MapEntry, MenuData, Screen};
 pub use editor::{tokenize, TokenKind, TokenSpan};
-pub use engine::{hint_unlock_state, Engine, HintUnlockState, XP_BOSS, XP_BOSS_FALLBACK, XP_COMBO, XP_PASS, XP_PERFECT};
+pub use engine::{
+    hint_unlock_state, load_custom_levels, CustomLevelError, Engine, HintUnlockState, XP_BOSS,
+    XP_BOSS_FALLBACK, XP_COMBO, XP_PASS, XP_PERFECT,
+};
 pub use error::GameError;
 pub use level::{Level, LevelSet, LevelTier};
 pub use rank::{rank_for, Rank};
