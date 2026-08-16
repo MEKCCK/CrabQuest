@@ -150,6 +150,22 @@ impl PanicClass {
             }
         }
     }
+
+    /// 短分类名（P1-03 panic 卡片标题用：「❗ 程序运行崩溃（分类）」）。
+    /// 与 `zh()`（完整解释）区分：标题只取名词短语，正文走净化消息。
+    pub fn short_zh(self) -> &'static str {
+        match self {
+            PanicClass::ArrayIndexOob => "索引越界",
+            PanicClass::UnwrapOptionNone => "对空值 unwrap",
+            PanicClass::UnwrapResultErr => "对错误结果 unwrap",
+            PanicClass::ParseFailure => "解析失败",
+            PanicClass::IntegerOverflow => "数值溢出",
+            PanicClass::DivideByZero => "除数为零",
+            PanicClass::ExplicitPanic => "显式 panic",
+            PanicClass::AllocFailure => "内存分配失败",
+            PanicClass::Generic => "未知运行时错误",
+        }
+    }
 }
 
 /// panic stderr 净化结果：定位行号/列号 + 净化后全文（含 `main.rs:N:M` 定位行）+ 分类

@@ -170,12 +170,12 @@ fn tier3_l0_print_feedback_non_empty() {
     // 2) 全流程 validate：反馈非空且走「无码编译错误」分支（EUNKNOWN 或 fallback 均可，
     //    但绝不能空白）
     match validate(lv, &lv.starter_code, &ErrorMapper::default_fallback(), &sb).unwrap() {
-        Validation::Fail { feedback } => {
-            assert!(!feedback.is_empty(), "禁止空反馈（锁死空白反馈面板 bug）");
-            assert!(!feedback[0].trim().is_empty(), "反馈首条不能是空白串");
+        Validation::Fail { errors, .. } => {
+            assert!(!errors.is_empty(), "禁止空反馈（锁死空白反馈面板 bug）");
+            assert!(!errors[0].zh.trim().is_empty(), "卡片 zh 不能是空白串");
             assert!(
-                feedback[0].contains("编译错误") || feedback[0].contains("无法解析"),
-                "应展示无码错误文案或硬兜底文案: {feedback:?}"
+                errors[0].zh.contains("编译错误") || errors[0].zh.contains("无法解析"),
+                "应展示无码错误文案或硬兜底文案: {errors:?}"
             );
         }
         Validation::Pass { .. } => panic!("broken starter 不应 Pass"),
