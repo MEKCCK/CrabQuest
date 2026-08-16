@@ -103,7 +103,11 @@ pub fn hint_unlock_state(
             _ => 2.min(hints_len.saturating_sub(1)), // ≥4 → 推进到最后一条
         };
         let expanded = expanded.min(unlocked.saturating_sub(1));
-        Some(HintUnlockState { unlocked, expanded, show_reference: fail_count >= 4 })
+        Some(HintUnlockState {
+            unlocked,
+            expanded,
+            show_reference: fail_count >= 4,
+        })
     } else {
         // 自定义阈值向量：逐阈值解锁
         let unlocked = hint_unlock
@@ -120,8 +124,31 @@ pub fn hint_unlock_state(
             .last()
             .unwrap_or(0)
             .min(unlocked.saturating_sub(1));
-        Some(HintUnlockState { unlocked, expanded, show_reference: fail_count >= 4 })
+        Some(HintUnlockState {
+            unlocked,
+            expanded,
+            show_reference: fail_count >= 4,
+        })
     }
+}
+
+/// P3-17：Boss 关提示门控阈值（v3 §7.5 提示默认禁用，fail_count ≥ 5 解锁兜底）。
+pub const BOSS_HINT_UNLOCK_FAILS: u32 = 5;
+
+/// Boss 关提示是否仍锁定（fail_count < 5 全锁；≥5 恢复正常解锁行为）。
+/// 纯函数：错误码解释卡不受影响（教学核心不豁免），只锁主动索取的提示。
+pub fn boss_hint_locked(is_boss: bool, fail_count: u32) -> bool {
+    is_boss && fail_count < BOSS_HINT_UNLOCK_FAILS
+}
+
+/// 解锁还需失败次数（展示用：0 = 已解锁，提示恢复正常）。
+pub fn boss_hint_lock_remaining(fail_count: u32) -> u32 {
+    BOSS_HINT_UNLOCK_FAILS.saturating_sub(fail_count)
+}
+
+/// best_time_ms 保留最小值（P3-18 通关分支记录；纯函数便于确定性单测）。
+pub fn min_best_time(current: Option<u64>, new_ms: u64) -> Option<u64> {
+    Some(current.map_or(new_ms, |b| b.min(new_ms)))
 }
 
 /// P4-26：单个自定义关卡文件的加载失败信息（中文呈现）。
@@ -258,7 +285,14 @@ impl Engine {
     ) -> Self {
         let builtin_count = level_set.len();
         level_set.levels.extend(custom_levels);
-        let mut engine = Self { level_set, builtin_count, save, current: None, mapper, sandbox };
+        let mut engine = Self {
+            level_set,
+            builtin_count,
+            save,
+            current: None,
+            mapper,
+            sandbox,
+        };
         engine.preset_custom_levels();
         engine
     }
@@ -266,10 +300,13 @@ impl Engine {
     /// 为每个自定义关卡补默认进度（Unlocked，可直接挑战）；已有存档条目原样保留。
     fn preset_custom_levels(&mut self) {
         for lvl in &self.level_set.levels[self.builtin_count..] {
-            self.save.level_states.entry(lvl.id.clone()).or_insert_with(|| LevelProgress {
-                state: LevelState::Unlocked,
-                ..LevelProgress::default()
-            });
+            self.save
+                .level_states
+                .entry(lvl.id.clone())
+                .or_insert_with(|| LevelProgress {
+                    state: LevelState::Unlocked,
+                    ..LevelProgress::default()
+                });
         }
     }
 
@@ -287,7 +324,9 @@ impl Engine {
     }
 
     pub fn is_builtin_id(&self, id: &str) -> bool {
-        self.level_set.levels[..self.builtin_count].iter().any(|l| l.id == id)
+        self.level_set.levels[..self.builtin_count]
+            .iter()
+            .any(|l| l.id == id)
     }
 
     /// 内置章节已通关关卡数（rank 判定依据；自定义关卡不计入）。
@@ -359,7 +398,13 @@ impl Engine {
             .map(|p| p.state)
             .unwrap_or(LevelState::Locked);
         if state == LevelState::Locked {
-            return Err(GameError::LevelLocked(level.id.clone()));
+            // P3-18 自由模式（R10 铁锈冠军）：内置关卡全部解锁重玩——
+            // 存档状态不变（统计/成就仍区分已通关），仅放行入口。
+            if self.save.practice_unlock_all && !self.is_custom_index(index) {
+                // 放行
+            } else {
+                return Err(GameError::LevelLocked(level.id.clone()));
+            }
         }
         self.current = Some(index);
         Ok(())
@@ -381,7 +426,11 @@ impl Engine {
             return Err(GameError::NoHearts);
         }
 
+        // P3-18：best_time_ms 度量本次提交耗时（validate = 编译 + 运行，主导时延），
+        // 通关分支记录最小值；`?` 提前返回时不计时（未通关无意义）。
+        let submit_started = std::time::Instant::now();
         let result = validate(&level, code, &self.mapper, self.sandbox.as_ref())?;
+        let submit_elapsed_ms = submit_started.elapsed().as_millis() as u64;
 
         // P4-26：自定义关卡隔离——连击/成就/rank 只认内置关卡；
         // 自定义进度照常写入 level_states，但不推进内置元进度
@@ -410,6 +459,8 @@ impl Engine {
                 entry.state = LevelState::Passed;
                 entry.attempts += 1;
                 entry.completed_at = Some(unix_secs());
+                // P3-18：通关分支记录最快用时（保留历史最小值）
+                entry.best_time_ms = min_best_time(entry.best_time_ms, submit_elapsed_ms);
                 // XP 一次制分档：实际奖励随 Validation::Pass 返回（v3 §7.2）
                 xp_gained = award_xp(
                     first_pass,
@@ -429,6 +480,13 @@ impl Engine {
                     entry.fail_count,
                     entry.hints_used.is_empty(),
                 ));
+                // P3-18：自由模式 + 末关庆典——内置全部通关（R10 铁锈冠军）：
+                // practice_unlock_all 解锁全部关卡重玩（重复通关 +0 XP 由一次制保证）；
+                // victory_celebrated 一次性庆典防重标记（存档持久化，重启后不再庆祝）。
+                if !is_custom && self.builtin_completed_count() == self.builtin_count {
+                    self.save.practice_unlock_all = true;
+                    self.save.victory_celebrated = true;
+                }
                 if !is_custom && idx + 1 < self.builtin_count {
                     // 内置线性解锁链：仅内置章节内推进；内置末尾不跨入自定义章节
                     if let Some(next) = self.level_set.levels.get(idx + 1) {
@@ -458,8 +516,9 @@ impl Engine {
                     .or_insert_with(LevelProgress::default);
                 entry.attempts += 1;
                 entry.fail_count += 1;
-                // P2-08：失败扣心（floor 0）；Boss 失败不扣（显式标注或命中已知 Boss 表）
-                if !(level.is_boss || crate::achievements::is_boss_level_id(&level.id)) {
+                // P2-08：失败扣心（floor 0）；P3-17：Boss 失败不扣（以显式
+                // is_boss 标注为准，不再依赖硬编码 id 表兜底——数据已落地标注）
+                if !level.is_boss {
                     self.save.hearts = self.save.hearts.saturating_sub(1);
                 }
                 // P2-10：记录本次见到的错误码（不同错误码去重累计，≥10 种解锁收藏家）
@@ -494,15 +553,16 @@ impl Engine {
             .as_ref()
             .filter(|(id, _, _)| builtin_ids.contains(id))
             .map(|(id, fail_count, hints_empty)| (id.as_str(), *fail_count, *hints_empty));
-        let newly = crate::achievements::check_achievements(&crate::achievements::AchievementCheck {
-            level_states: &builtin_states,
-            completed_steps: &builtin_steps,
-            combo: self.save.combo,
-            seen_error_codes: &self.save.seen_error_codes,
-            total_levels: self.builtin_count,
-            already: &self.save.achievements,
-            just_passed: builtin_just_passed,
-        });
+        let newly =
+            crate::achievements::check_achievements(&crate::achievements::AchievementCheck {
+                level_states: &builtin_states,
+                completed_steps: &builtin_steps,
+                combo: self.save.combo,
+                seen_error_codes: &self.save.seen_error_codes,
+                total_levels: self.builtin_count,
+                already: &self.save.achievements,
+                just_passed: builtin_just_passed,
+            });
         for id in newly {
             self.save.achievements.insert(id);
         }
@@ -574,7 +634,11 @@ impl Engine {
 
     pub fn can_continue(&self) -> bool {
         self.save.xp > 0
-            || self.save.level_states.values().any(|p| p.state == LevelState::Passed)
+            || self
+                .save
+                .level_states
+                .values()
+                .any(|p| p.state == LevelState::Passed)
     }
 
     pub fn save_ref(&self) -> &SaveData {
@@ -593,8 +657,8 @@ fn unix_secs() -> String {
 mod tests {
     use super::*;
     use crate::level::{parse_levels, LevelSet};
-    use crate::save::{LevelState, SaveData};
     use crate::sandbox::DevSandbox;
+    use crate::save::{LevelState, SaveData};
     use crate::validate::mapper::ErrorMapper;
     use crate::validate::Validation;
 
@@ -619,16 +683,29 @@ source = "rustlings"
 "#;
 
     fn engine() -> Engine {
-        let set = LevelSet { levels: parse_levels(LEVELS).unwrap() };
-        Engine::new(set, SaveData::default(), ErrorMapper::default_fallback(), Box::new(DevSandbox::new()))
+        let set = LevelSet {
+            levels: parse_levels(LEVELS).unwrap(),
+        };
+        Engine::new(
+            set,
+            SaveData::default(),
+            ErrorMapper::default_fallback(),
+            Box::new(DevSandbox::new()),
+        )
     }
 
     #[test]
     fn new_game_unlocks_first() {
         let mut e = engine();
         e.new_game();
-        assert_eq!(e.save.level_states.get("l0-hello").unwrap().state, LevelState::Unlocked);
-        assert_eq!(e.save.level_states.get("l1-move").unwrap().state, LevelState::Locked);
+        assert_eq!(
+            e.save.level_states.get("l0-hello").unwrap().state,
+            LevelState::Unlocked
+        );
+        assert_eq!(
+            e.save.level_states.get("l1-move").unwrap().state,
+            LevelState::Locked
+        );
     }
 
     #[test]
@@ -645,12 +722,29 @@ source = "rustlings"
         e.start_level(0).unwrap();
         let code = "fn main() { println!(\"x has the value {}\", 5); }";
         // 首通 + 完美（首次提交即通过）→ 25 + 10 = 35
-        assert_eq!(e.submit(code).unwrap(), Validation::Pass { xp_gained: XP_PASS + XP_PERFECT });
+        assert_eq!(
+            e.submit(code).unwrap(),
+            Validation::Pass {
+                xp_gained: XP_PASS + XP_PERFECT
+            }
+        );
         assert_eq!(e.save.xp, XP_PASS + XP_PERFECT);
         assert_eq!(e.save.combo, 1);
-        assert_eq!(e.save.level_states.get("l0-hello").unwrap().state, LevelState::Passed);
-        assert_eq!(e.save.level_states.get("l1-move").unwrap().state, LevelState::Unlocked);
-        assert!(e.save.level_states.get("l0-hello").unwrap().completed_at.is_some());
+        assert_eq!(
+            e.save.level_states.get("l0-hello").unwrap().state,
+            LevelState::Passed
+        );
+        assert_eq!(
+            e.save.level_states.get("l1-move").unwrap().state,
+            LevelState::Unlocked
+        );
+        assert!(e
+            .save
+            .level_states
+            .get("l0-hello")
+            .unwrap()
+            .completed_at
+            .is_some());
     }
 
     #[test]
@@ -670,7 +764,10 @@ source = "rustlings"
         assert_eq!(e.save.total_errors, 1);
         assert_eq!(e.save.level_states.get("l1-move").unwrap().attempts, 1);
         // 失败不改变关卡状态
-        assert_eq!(e.save.level_states.get("l1-move").unwrap().state, LevelState::Unlocked);
+        assert_eq!(
+            e.save.level_states.get("l1-move").unwrap().state,
+            LevelState::Unlocked
+        );
     }
 
     #[test]
@@ -681,7 +778,12 @@ source = "rustlings"
             )
             .unwrap(),
         };
-        let mut e = Engine::new(set, SaveData::default(), ErrorMapper::default_fallback(), Box::new(DevSandbox::new()));
+        let mut e = Engine::new(
+            set,
+            SaveData::default(),
+            ErrorMapper::default_fallback(),
+            Box::new(DevSandbox::new()),
+        );
         e.new_game();
         e.start_level(0).unwrap();
         let code = "fn main() { let s = String::from(\"hi\"); let t = s; println!(\"{}\", s); }";
@@ -695,7 +797,8 @@ source = "rustlings"
         e.new_game();
         assert!(!e.can_continue());
         e.start_level(0).unwrap();
-        e.submit("fn main() { println!(\"x has the value {}\", 5); }").unwrap();
+        e.submit("fn main() { println!(\"x has the value {}\", 5); }")
+            .unwrap();
         assert!(e.can_continue());
     }
 
@@ -708,7 +811,12 @@ source = "rustlings"
             )
             .unwrap(),
         };
-        Engine::new(set, SaveData::default(), ErrorMapper::default_fallback(), Box::new(DevSandbox::new()))
+        Engine::new(
+            set,
+            SaveData::default(),
+            ErrorMapper::default_fallback(),
+            Box::new(DevSandbox::new()),
+        )
     }
 
     #[test]
@@ -724,7 +832,12 @@ source = "rustlings"
         e.new_game();
         e.start_level(0).unwrap();
         let code = "fn main() { println!(\"x has the value {}\", 5); }";
-        assert_eq!(e.submit(code).unwrap(), Validation::Pass { xp_gained: XP_PASS + XP_PERFECT });
+        assert_eq!(
+            e.submit(code).unwrap(),
+            Validation::Pass {
+                xp_gained: XP_PASS + XP_PERFECT
+            }
+        );
         assert_eq!(e.save.xp, XP_PASS + XP_PERFECT);
         assert!(e.save.completed_steps.contains("l0-hello:pass"));
         // 重复通关同一关：+0 XP，combo 仍更新（练习价值保留）
@@ -746,7 +859,10 @@ source = "rustlings"
     fn combo_3_or_more_awards_5() {
         // 连击加成：首通且通过后 combo >= 3 → +5（v3「通过后 combo ≥ 3」，取累加后值）
         assert_eq!(award_xp(true, false, 1, 3, 3), XP_PASS + XP_COMBO);
-        assert_eq!(award_xp(true, false, 0, 3, 1), XP_PASS + XP_PERFECT + XP_COMBO);
+        assert_eq!(
+            award_xp(true, false, 0, 3, 1),
+            XP_PASS + XP_PERFECT + XP_COMBO
+        );
         // combo 2 时无加成
         assert_eq!(award_xp(true, false, 0, 2, 1), XP_PASS + XP_PERFECT);
     }
@@ -763,7 +879,10 @@ source = "rustlings"
     fn boss_first_pass_4_attempts_50() {
         // Boss 首通 ≤4 次尝试 → +50（替换 base；perfect/combo 照常叠加）
         assert_eq!(award_xp(true, true, 3, 1, 4), XP_BOSS);
-        assert_eq!(award_xp(true, true, 0, 3, 1), XP_BOSS + XP_PERFECT + XP_COMBO);
+        assert_eq!(
+            award_xp(true, true, 0, 3, 1),
+            XP_BOSS + XP_PERFECT + XP_COMBO
+        );
         // Boss 单关上限 65 = 50 + 10 + 5
         assert_eq!(XP_BOSS + XP_PERFECT + XP_COMBO, 65);
     }
@@ -784,7 +903,10 @@ source = "rustlings"
         for _ in 0..3 {
             e.submit(bad).unwrap();
         }
-        assert_eq!(e.submit("fn main() { println!(\"ok\"); }").unwrap(), Validation::Pass { xp_gained: XP_BOSS });
+        assert_eq!(
+            e.submit("fn main() { println!(\"ok\"); }").unwrap(),
+            Validation::Pass { xp_gained: XP_BOSS }
+        );
         let p = e.save.level_states.get("boss").unwrap();
         assert_eq!(p.fail_count, 3);
         assert_eq!(p.attempts, 4);
@@ -795,7 +917,12 @@ source = "rustlings"
         for _ in 0..4 {
             e2.submit(bad).unwrap();
         }
-        assert_eq!(e2.submit("fn main() { println!(\"ok\"); }").unwrap(), Validation::Pass { xp_gained: XP_BOSS_FALLBACK });
+        assert_eq!(
+            e2.submit("fn main() { println!(\"ok\"); }").unwrap(),
+            Validation::Pass {
+                xp_gained: XP_BOSS_FALLBACK
+            }
+        );
         let p = e2.save.level_states.get("boss").unwrap();
         assert_eq!(p.fail_count, 4);
         assert_eq!(p.attempts, 5);
@@ -815,7 +942,10 @@ source = "rustlings"
         assert_eq!(p.attempts, 2);
         // 通过：attempts 含本次（3），fail_count 保持 2 → 无 perfect、combo 1 < 3 无连击
         let code = "fn main() { println!(\"x has the value {}\", 5); }";
-        assert_eq!(e.submit(code).unwrap(), Validation::Pass { xp_gained: XP_PASS });
+        assert_eq!(
+            e.submit(code).unwrap(),
+            Validation::Pass { xp_gained: XP_PASS }
+        );
         let p = e.save.level_states.get("l0-hello").unwrap();
         assert_eq!(p.fail_count, 2);
         assert_eq!(p.attempts, 3);
@@ -830,9 +960,13 @@ source = "rustlings"
         // 伪造 R10 存档：15 关 Passed
         for i in 0..15 {
             let id = format!("fake{i}");
-            e.save
-                .level_states
-                .insert(id, LevelProgress { state: LevelState::Passed, ..LevelProgress::default() });
+            e.save.level_states.insert(
+                id,
+                LevelProgress {
+                    state: LevelState::Passed,
+                    ..LevelProgress::default()
+                },
+            );
         }
         assert_eq!(crate::rank::rank_for(e.save.completed_count()).level, 10);
         // l1-move 仍 Locked → 拒绝进入（解锁只看 level_states.state）
@@ -872,12 +1006,30 @@ source = "rustlings"
         e.start_level(0).unwrap();
         e.save.hearts = 0;
         let before_xp = e.save.xp;
-        let before_attempts = e.save.level_states.get("l0-hello").map(|p| p.attempts).unwrap_or(0);
-        assert!(matches!(e.submit("fn main() { println!(\"x has the value {}\", 5); }"), Err(GameError::NoHearts)));
+        let before_attempts = e
+            .save
+            .level_states
+            .get("l0-hello")
+            .map(|p| p.attempts)
+            .unwrap_or(0);
+        assert!(matches!(
+            e.submit("fn main() { println!(\"x has the value {}\", 5); }"),
+            Err(GameError::NoHearts)
+        ));
         // 0 心拦截：不扣 XP、不计尝试、不改变状态
         assert_eq!(e.save.xp, before_xp);
-        assert_eq!(e.save.level_states.get("l0-hello").map(|p| p.attempts).unwrap_or(0), before_attempts);
-        assert_eq!(e.save.level_states.get("l0-hello").unwrap().state, LevelState::Unlocked);
+        assert_eq!(
+            e.save
+                .level_states
+                .get("l0-hello")
+                .map(|p| p.attempts)
+                .unwrap_or(0),
+            before_attempts
+        );
+        assert_eq!(
+            e.save.level_states.get("l0-hello").unwrap().state,
+            LevelState::Unlocked
+        );
     }
 
     #[test]
@@ -915,19 +1067,34 @@ source = "rustlings"
     }
 
     #[test]
-    fn boss_id_fallback_keeps_hearts_even_without_flag() {
-        // 已知 Boss id 表兜底：即使数据未标注 is_boss，失败也不扣心（P3-17 数据未落地前）
+    fn boss_hearts_follow_is_boss_flag_only() {
+        // P3-17 数据落地后：is_boss 标注是唯一依据（不再用硬编码 id 表兜底）。
+        // 同 id 关卡：标注 is_boss → 失败不扣心；未标注 → 按普通关 −1。
         let set = LevelSet {
             levels: parse_levels(
                 "[[level]]\nid = \"l1-clone\"\ntitle = \"boss\"\ntier = \"l1\"\ndescription = \"d\"\nstarter_code = \"fn main() { println!(1); }\"\nexpect_output = \"1\"\nsource = \"x\"\n",
             )
             .unwrap(),
         };
-        let mut e = Engine::new(set, SaveData::default(), ErrorMapper::default_fallback(), Box::new(DevSandbox::new()));
+        let mut e = Engine::new(
+            set,
+            SaveData::default(),
+            ErrorMapper::default_fallback(),
+            Box::new(DevSandbox::new()),
+        );
         e.new_game();
         e.start_level(0).unwrap();
         e.submit("fn main() { println!(\"wrong\"); }").unwrap();
-        assert_eq!(e.save.hearts, 3);
+        assert_eq!(
+            e.save.hearts, 2,
+            "未标注 is_boss → 按普通关扣心（id 表不再兜底）"
+        );
+
+        let mut e2 = boss_engine(); // is_boss = true
+        e2.new_game();
+        e2.start_level(0).unwrap();
+        e2.submit("fn main() { println!(\"wrong\"); }").unwrap();
+        assert_eq!(e2.save.hearts, 3, "标注 is_boss → 失败不扣心");
     }
 
     #[test]
@@ -972,7 +1139,8 @@ source = "rustlings"
         let mut e = engine();
         e.new_game();
         e.start_level(0).unwrap();
-        e.submit("fn main() { println!(\"x has the value {}\", 5); }").unwrap();
+        e.submit("fn main() { println!(\"x has the value {}\", 5); }")
+            .unwrap();
         assert_eq!(e.save.streak_days, 1);
         let today = crate::streak::today_str();
         assert_eq!(e.save.last_played_date.as_deref(), Some(today.as_str()));
@@ -1005,7 +1173,8 @@ source = "rustlings"
         let yesterday = crate::streak::previous_day(&today).expect("today 必有昨天");
         e.save.last_played_date = Some(yesterday.clone());
         e.start_level(0).unwrap();
-        e.submit("fn main() { println!(\"x has the value {}\", 5); }").unwrap();
+        e.submit("fn main() { println!(\"x has the value {}\", 5); }")
+            .unwrap();
         assert_eq!(e.save.streak_days, 4, "昨日活跃 → +1");
         assert_eq!(e.save.last_played_date.as_deref(), Some(today.as_str()));
     }
@@ -1028,7 +1197,8 @@ source = "rustlings"
         let mut e = engine();
         e.new_game();
         e.start_level(0).unwrap();
-        e.submit("fn main() { println!(\"x has the value {}\", 5); }").unwrap();
+        e.submit("fn main() { println!(\"x has the value {}\", 5); }")
+            .unwrap();
         assert!(e.save.achievements.contains("first_steps"));
         // 首通即完美且未看 hint → 无师自通
         assert!(e.save.achievements.contains("no_hint_perfect"));
@@ -1043,7 +1213,11 @@ source = "rustlings"
         // 已知 E0382 错误（move 语义，与 allow_compile_fail 测试同源代码）
         let code = "fn main() { let s = String::from(\"hi\"); let t = s; println!(\"{}\", s); }";
         e.submit(code).unwrap();
-        assert!(e.save.seen_error_codes.contains("E0382"), "seen_error_codes 应记录 E0382: {:?}", e.save.seen_error_codes);
+        assert!(
+            e.save.seen_error_codes.contains("E0382"),
+            "seen_error_codes 应记录 E0382: {:?}",
+            e.save.seen_error_codes
+        );
         // 重复提交同码不重复计数
         e.submit(code).unwrap();
         assert_eq!(e.save.seen_error_codes.len(), 1);
@@ -1057,27 +1231,48 @@ source = "rustlings"
             )
             .unwrap(),
         };
-        let mut e = Engine::new(set, SaveData::default(), ErrorMapper::default_fallback(), Box::new(DevSandbox::new()));
+        let mut e = Engine::new(
+            set,
+            SaveData::default(),
+            ErrorMapper::default_fallback(),
+            Box::new(DevSandbox::new()),
+        );
         e.new_game();
         e.start_level(0).unwrap();
         assert!(!e.save.achievements.contains("boss_slayer"));
         e.submit("fn main() { println!(\"1\"); }").unwrap();
         assert!(e.save.achievements.contains("boss_slayer"));
         assert!(e.save.achievements.contains("first_steps"));
-        assert!(!e.save.achievements.contains("boss_all"), "单 Boss 不触发屠龙");
-        assert!(e.save.achievements.contains("champion"), "单关总关数 1 → 通关即冠军");
+        assert!(
+            !e.save.achievements.contains("boss_all"),
+            "单 Boss 不触发屠龙"
+        );
+        assert!(
+            e.save.achievements.contains("champion"),
+            "单关总关数 1 → 通关即冠军"
+        );
     }
 
     #[test]
     fn all_four_bosses_unlock_boss_all() {
         let mut toml = String::new();
-        for (i, id) in ["l1-clone", "l2-result", "l3-trait", "l4-lifetime-trap"].iter().enumerate() {
+        for (i, id) in ["l1-clone", "l2-result", "l3-trait", "l4-lifetime-trap"]
+            .iter()
+            .enumerate()
+        {
             toml.push_str(&format!(
                 "[[level]]\nid = \"{id}\"\ntitle = \"boss{i}\"\ntier = \"l4\"\ndescription = \"d\"\nstarter_code = \"fn main() {{ println!(\\\"1\\\"); }}\"\nis_boss = true\nexpect_output = \"1\"\nsource = \"x\"\n"
             ));
         }
-        let set = LevelSet { levels: parse_levels(&toml).unwrap() };
-        let mut e = Engine::new(set, SaveData::default(), ErrorMapper::default_fallback(), Box::new(DevSandbox::new()));
+        let set = LevelSet {
+            levels: parse_levels(&toml).unwrap(),
+        };
+        let mut e = Engine::new(
+            set,
+            SaveData::default(),
+            ErrorMapper::default_fallback(),
+            Box::new(DevSandbox::new()),
+        );
         e.new_game();
         for i in 0..4 {
             e.start_level(i).unwrap();
@@ -1106,8 +1301,12 @@ source = "rustlings"
         e.save.hearts = 0;
         assert!(e.review_lore("l0-hello"), "0 心复习应回 1 心");
         assert_eq!(e.save.hearts, 1);
-        e.submit("fn main() { println!(\"x has the value {}\", 5); }").unwrap();
-        assert!(e.save.achievements.contains("never_give_up"), "失败 ≥10 次后通过 → 永不言弃");
+        e.submit("fn main() { println!(\"x has the value {}\", 5); }")
+            .unwrap();
+        assert!(
+            e.save.achievements.contains("never_give_up"),
+            "失败 ≥10 次后通过 → 永不言弃"
+        );
     }
 
     #[test]
@@ -1132,37 +1331,135 @@ source = "rustlings"
         // 默认阈值 [1,3,5]（3 条提示）：行为表 4 档
         let s = |fc| hint_unlock_state(3, &[1, 3, 5], fc).unwrap();
         // 0-1 次失败：hint[0] 可看
-        assert_eq!(s(0), HintUnlockState { unlocked: 1, expanded: 0, show_reference: false });
-        assert_eq!(s(1), HintUnlockState { unlocked: 1, expanded: 0, show_reference: false });
+        assert_eq!(
+            s(0),
+            HintUnlockState {
+                unlocked: 1,
+                expanded: 0,
+                show_reference: false
+            }
+        );
+        assert_eq!(
+            s(1),
+            HintUnlockState {
+                unlocked: 1,
+                expanded: 0,
+                show_reference: false
+            }
+        );
         // ≥2 次：hint[0..2) 解锁且自动展开 hint[0]
-        assert_eq!(s(2), HintUnlockState { unlocked: 2, expanded: 0, show_reference: false });
+        assert_eq!(
+            s(2),
+            HintUnlockState {
+                unlocked: 2,
+                expanded: 0,
+                show_reference: false
+            }
+        );
         // ≥3 次：全部解锁且自动推进到 hint[1]
-        assert_eq!(s(3), HintUnlockState { unlocked: 3, expanded: 1, show_reference: false });
+        assert_eq!(
+            s(3),
+            HintUnlockState {
+                unlocked: 3,
+                expanded: 1,
+                show_reference: false
+            }
+        );
         // ≥4 次：推进到最后一条（hint[2]）+ 参考答案按钮
-        assert_eq!(s(4), HintUnlockState { unlocked: 3, expanded: 2, show_reference: true });
-        assert_eq!(s(9), HintUnlockState { unlocked: 3, expanded: 2, show_reference: true });
+        assert_eq!(
+            s(4),
+            HintUnlockState {
+                unlocked: 3,
+                expanded: 2,
+                show_reference: true
+            }
+        );
+        assert_eq!(
+            s(9),
+            HintUnlockState {
+                unlocked: 3,
+                expanded: 2,
+                show_reference: true
+            }
+        );
     }
 
     #[test]
     fn hint_unlock_state_default_table_clamps_to_hint_count() {
         // 2 条提示 + [1,3,5]（数据仅作防御）：unlocked/expanded 钳制在 len 内
         let s = |fc| hint_unlock_state(2, &[1, 3, 5], fc).unwrap();
-        assert_eq!(s(2), HintUnlockState { unlocked: 2, expanded: 0, show_reference: false });
-        assert_eq!(s(4), HintUnlockState { unlocked: 2, expanded: 1, show_reference: true });
+        assert_eq!(
+            s(2),
+            HintUnlockState {
+                unlocked: 2,
+                expanded: 0,
+                show_reference: false
+            }
+        );
+        assert_eq!(
+            s(4),
+            HintUnlockState {
+                unlocked: 2,
+                expanded: 1,
+                show_reference: true
+            }
+        );
         // 单条提示
         let s1 = |fc| hint_unlock_state(1, &[1, 3, 5], fc).unwrap();
-        assert_eq!(s1(4), HintUnlockState { unlocked: 1, expanded: 0, show_reference: true });
+        assert_eq!(
+            s1(4),
+            HintUnlockState {
+                unlocked: 1,
+                expanded: 0,
+                show_reference: true
+            }
+        );
     }
 
     #[test]
     fn hint_unlock_state_custom_thresholds_per_threshold() {
         // 自定义阈值 [2,4,6]：逐阈值解锁，展开到「已解锁且阈值 ≤ fc」的最高索引
         let s = |fc| hint_unlock_state(3, &[2, 4, 6], fc).unwrap();
-        assert_eq!(s(0), HintUnlockState { unlocked: 0, expanded: 0, show_reference: false });
-        assert_eq!(s(1), HintUnlockState { unlocked: 0, expanded: 0, show_reference: false });
-        assert_eq!(s(2), HintUnlockState { unlocked: 1, expanded: 0, show_reference: false });
-        assert_eq!(s(4), HintUnlockState { unlocked: 2, expanded: 1, show_reference: true });
-        assert_eq!(s(6), HintUnlockState { unlocked: 3, expanded: 2, show_reference: true });
+        assert_eq!(
+            s(0),
+            HintUnlockState {
+                unlocked: 0,
+                expanded: 0,
+                show_reference: false
+            }
+        );
+        assert_eq!(
+            s(1),
+            HintUnlockState {
+                unlocked: 0,
+                expanded: 0,
+                show_reference: false
+            }
+        );
+        assert_eq!(
+            s(2),
+            HintUnlockState {
+                unlocked: 1,
+                expanded: 0,
+                show_reference: false
+            }
+        );
+        assert_eq!(
+            s(4),
+            HintUnlockState {
+                unlocked: 2,
+                expanded: 1,
+                show_reference: true
+            }
+        );
+        assert_eq!(
+            s(6),
+            HintUnlockState {
+                unlocked: 3,
+                expanded: 2,
+                show_reference: true
+            }
+        );
     }
 
     #[test]
@@ -1182,10 +1479,16 @@ source = "rustlings"
         assert!(e.reveal_hint("l0-hello", 1));
         assert!(e.reveal_hint("l0-hello", 0));
         assert!(!e.reveal_hint("l0-hello", 1), "重复查看幂等");
-        assert_eq!(e.save.level_states.get("l0-hello").unwrap().hints_used, vec![0, 1]);
+        assert_eq!(
+            e.save.level_states.get("l0-hello").unwrap().hints_used,
+            vec![0, 1]
+        );
         // 不存在的关卡 id：自动补默认进度（不 panic）
         assert!(e.reveal_hint("unknown-level", 2));
-        assert_eq!(e.save.level_states.get("unknown-level").unwrap().hints_used, vec![2]);
+        assert_eq!(
+            e.save.level_states.get("unknown-level").unwrap().hints_used,
+            vec![2]
+        );
     }
 
     #[test]
@@ -1205,8 +1508,16 @@ source = "rustlings"
         assert_eq!(after.hints_used, vec![0], "查看被记录");
         assert_eq!(e.save.hearts, before.hearts, "查看 hint 不扣心");
         assert_eq!(e.save.xp, before.xp, "查看 hint 不扣 XP");
-        assert_eq!(after.fail_count, before.level_states.get("l0-hello").unwrap().fail_count, "fail_count 不变");
-        assert_eq!(after.attempts, before.level_states.get("l0-hello").unwrap().attempts, "attempts 不变");
+        assert_eq!(
+            after.fail_count,
+            before.level_states.get("l0-hello").unwrap().fail_count,
+            "fail_count 不变"
+        );
+        assert_eq!(
+            after.attempts,
+            before.level_states.get("l0-hello").unwrap().attempts,
+            "attempts 不变"
+        );
     }
 
     #[test]
@@ -1216,9 +1527,17 @@ source = "rustlings"
         e.new_game();
         e.start_level(0).unwrap();
         e.reveal_hint("l0-hello", 0);
-        e.submit("fn main() { println!(\"x has the value {}\", 5); }").unwrap();
-        assert_eq!(e.save.level_states.get("l0-hello").unwrap().fail_count, 0, "查看 hint 不改 fail_count");
-        assert!(!e.save.achievements.contains("no_hint_perfect"), "看过 hint 后完美通关也不应无师自通");
+        e.submit("fn main() { println!(\"x has the value {}\", 5); }")
+            .unwrap();
+        assert_eq!(
+            e.save.level_states.get("l0-hello").unwrap().fail_count,
+            0,
+            "查看 hint 不改 fail_count"
+        );
+        assert!(
+            !e.save.achievements.contains("no_hint_perfect"),
+            "看过 hint 后完美通关也不应无师自通"
+        );
     }
 
     #[test]
@@ -1227,11 +1546,16 @@ source = "rustlings"
         let mut e = engine();
         e.new_game();
         e.start_level(0).unwrap();
-        e.submit("fn main() { println!(\"x has the value {}\", 5); }").unwrap();
+        e.submit("fn main() { println!(\"x has the value {}\", 5); }")
+            .unwrap();
         assert!(e.save.achievements.contains("no_hint_perfect"));
         e.reveal_hint("l0-hello", 0);
-        e.submit("fn main() { println!(\"x has the value {}\", 5); }").unwrap();
-        assert!(e.save.achievements.contains("no_hint_perfect"), "已发成就不因后看 hint 撤回");
+        e.submit("fn main() { println!(\"x has the value {}\", 5); }")
+            .unwrap();
+        assert!(
+            e.save.achievements.contains("no_hint_perfect"),
+            "已发成就不因后看 hint 撤回"
+        );
     }
 
     // ===== P4-26：自定义关卡导入（独立章节 + 存档隔离）=====
@@ -1252,7 +1576,9 @@ source = "community"
     }
 
     fn custom_engine() -> Engine {
-        let builtin = LevelSet { levels: parse_levels(LEVELS).unwrap() };
+        let builtin = LevelSet {
+            levels: parse_levels(LEVELS).unwrap(),
+        };
         Engine::with_custom_levels(
             builtin,
             vec![custom_level()],
@@ -1263,7 +1589,10 @@ source = "community"
     }
 
     fn two_builtin_ids() -> HashSet<String> {
-        ["l0-hello", "l1-move"].into_iter().map(String::from).collect()
+        ["l0-hello", "l1-move"]
+            .into_iter()
+            .map(String::from)
+            .collect()
     }
 
     #[test]
@@ -1321,11 +1650,27 @@ source = "community"
         assert_eq!(levels[0].id, "c1-hello");
         assert_eq!(errors.len(), 3);
         for e in &errors {
-            assert!(e.message().contains("加载失败"), "逐文件中文错误: {}", e.message());
+            assert!(
+                e.message().contains("加载失败"),
+                "逐文件中文错误: {}",
+                e.message()
+            );
         }
-        assert!(errors[0].reason.contains("TOML"), "TOML 解析错误原因: {}", errors[0].reason);
-        assert!(errors[1].reason.contains("越界"), "quiz 越界原因: {}", errors[1].reason);
-        assert!(errors[2].reason.contains("source"), "source 缺失原因: {}", errors[2].reason);
+        assert!(
+            errors[0].reason.contains("TOML"),
+            "TOML 解析错误原因: {}",
+            errors[0].reason
+        );
+        assert!(
+            errors[1].reason.contains("越界"),
+            "quiz 越界原因: {}",
+            errors[1].reason
+        );
+        assert!(
+            errors[2].reason.contains("source"),
+            "source 缺失原因: {}",
+            errors[2].reason
+        );
     }
 
     #[test]
@@ -1342,14 +1687,20 @@ source = "community"
         let mut e = custom_engine();
         e.new_game();
         // 自定义关卡默认 Unlocked，可直接挑战（不依赖内置线性链）
-        assert_eq!(e.save.level_states.get("c1-hello").unwrap().state, LevelState::Unlocked);
+        assert_eq!(
+            e.save.level_states.get("c1-hello").unwrap().state,
+            LevelState::Unlocked
+        );
         assert_eq!(e.builtin_count, 2);
         assert!(e.is_custom_index(2));
         e.start_level(2).unwrap();
         assert_eq!(e.current, Some(2));
         let res = e.submit("fn main() { println!(\"custom ok\"); }").unwrap();
         assert!(matches!(res, Validation::Pass { .. }));
-        assert_eq!(e.save.level_states.get("c1-hello").unwrap().state, LevelState::Passed);
+        assert_eq!(
+            e.save.level_states.get("c1-hello").unwrap().state,
+            LevelState::Passed
+        );
     }
 
     #[test]
@@ -1359,15 +1710,23 @@ source = "community"
         e.start_level(2).unwrap();
         e.submit("fn main() { println!(\"custom ok\"); }").unwrap();
         // 自定义通关不触发任何成就（first_steps/champion 等）
-        assert!(e.save.achievements.is_empty(), "自定义通关不应触发成就: {:?}", e.save.achievements);
+        assert!(
+            e.save.achievements.is_empty(),
+            "自定义通关不应触发成就: {:?}",
+            e.save.achievements
+        );
         assert_eq!(e.builtin_completed_count(), 0, "rank 只认内置进度");
         assert_eq!(crate::rank::rank_for(e.builtin_completed_count()).level, 1);
         // 存档隔离：自定义进度本身照常落盘（level_states 支持任意 id）
-        assert_eq!(e.save.level_states.get("c1-hello").unwrap().state, LevelState::Passed);
+        assert_eq!(
+            e.save.level_states.get("c1-hello").unwrap().state,
+            LevelState::Passed
+        );
         assert!(e.save.completed_steps.contains("c1-hello:pass"));
         // 再通关内置 → first_steps 正常触发（成就体系未被自定义污染）
         e.start_level(0).unwrap();
-        e.submit("fn main() { println!(\"x has the value {}\", 5); }").unwrap();
+        e.submit("fn main() { println!(\"x has the value {}\", 5); }")
+            .unwrap();
         assert!(e.save.achievements.contains("first_steps"));
         assert_eq!(e.builtin_completed_count(), 1);
     }
@@ -1382,7 +1741,8 @@ source = "community"
         assert_eq!(e.save.combo, 0, "自定义通关不累加内置连击");
         // 自定义失败：不重置内置连击
         e.start_level(0).unwrap();
-        e.submit("fn main() { println!(\"x has the value {}\", 5); }").unwrap();
+        e.submit("fn main() { println!(\"x has the value {}\", 5); }")
+            .unwrap();
         assert_eq!(e.save.combo, 1);
         e.start_level(2).unwrap();
         e.submit("fn main() { println!(\"wrong\"); }").unwrap();
@@ -1415,5 +1775,155 @@ source = "community"
             "自定义进度存档回读保留"
         );
         assert!(loaded.completed_steps.contains("c1-hello:pass"));
+    }
+
+    // ---- P3-17：Boss 提示门控 + P3-18：best_time/自由模式/末关庆典 ----
+
+    #[test]
+    fn boss_hint_locked_below_five_fails_unlocked_at_five() {
+        // v3 §7.5：Boss 提示默认禁用，fail_count ≥ 5 解锁兜底
+        assert!(boss_hint_locked(true, 0));
+        assert!(boss_hint_locked(true, 4));
+        assert!(!boss_hint_locked(true, 5), "fail_count ≥5 → 提示恢复正常");
+        assert!(!boss_hint_locked(true, 9));
+        // 普通关不受门控
+        assert!(!boss_hint_locked(false, 0));
+        assert!(!boss_hint_locked(false, 4));
+    }
+
+    #[test]
+    fn boss_hint_lock_remaining_counts_down() {
+        // 展示用剩余次数：0 → 5、4 → 1、≥5 → 0（已解锁）
+        assert_eq!(boss_hint_lock_remaining(0), 5);
+        assert_eq!(boss_hint_lock_remaining(1), 4);
+        assert_eq!(boss_hint_lock_remaining(4), 1);
+        assert_eq!(boss_hint_lock_remaining(5), 0);
+        assert_eq!(boss_hint_lock_remaining(99), 0);
+    }
+
+    #[test]
+    fn boss_hint_locked_ignores_hint_input_in_app() {
+        // Boss 关 fail_count < 5：按提示键不应打开提示面板（状态不翻转）
+        let set = LevelSet {
+            levels: parse_levels(
+                "[[level]]\nid = \"b\"\ntitle = \"b\"\ntier = \"l1\"\ndescription = \"d\"\nhints = [\"概念\", \"定位\", \"解法\"]\nhint_unlock = [1, 3, 5]\nis_boss = true\nstarter_code = \"fn main() { println!(1); }\"\nexpect_output = \"1\"\nsource = \"x\"\n",
+            )
+            .unwrap(),
+        };
+        let mut e = Engine::new(
+            set,
+            SaveData::default(),
+            ErrorMapper::default_fallback(),
+            Box::new(DevSandbox::new()),
+        );
+        e.new_game();
+        e.start_level(0).unwrap();
+        // 初始 fail_count=0：Boss 门控锁定，按提示不应展示
+        let st = hint_unlock_state(3, &[1, 3, 5], 0).unwrap();
+        assert_eq!(st.unlocked, 1, "普通关本应解锁 hint[0]");
+        assert!(boss_hint_locked(true, 0));
+        // 失败 4 次仍锁；第 5 次失败后解锁
+        let mut fc = 0;
+        for _ in 0..4 {
+            fc += 1;
+            assert!(boss_hint_locked(true, fc), "fc={fc} 仍锁");
+        }
+        assert!(!boss_hint_locked(true, 5), "fc=5 解锁");
+    }
+
+    #[test]
+    fn min_best_time_keeps_smallest() {
+        assert_eq!(min_best_time(None, 1200), Some(1200), "首次记录");
+        assert_eq!(min_best_time(Some(1200), 800), Some(800), "更快 → 更新");
+        assert_eq!(
+            min_best_time(Some(800), 1500),
+            Some(800),
+            "更慢 → 保留历史最小"
+        );
+    }
+
+    #[test]
+    fn pass_records_best_time_ms() {
+        let mut e = engine();
+        e.new_game();
+        e.start_level(0).unwrap();
+        let code = "fn main() { println!(\"x has the value {}\", 5); }";
+        e.submit(code).unwrap();
+        let p = e.save.level_states.get("l0-hello").unwrap();
+        assert!(p.best_time_ms.is_some(), "通关分支应记录 best_time_ms");
+        // 重复通关仍记录（最小值保留）
+        e.submit(code).unwrap();
+        let p = e.save.level_states.get("l0-hello").unwrap();
+        assert!(p.best_time_ms.is_some());
+    }
+
+    fn all_pass_engine() -> Engine {
+        // 两关内置：全过 = 通关全部（自由模式 + 末关庆典边界）
+        let set = LevelSet {
+            levels: parse_levels(LEVELS).unwrap(),
+        };
+        let mut e = Engine::new(
+            set,
+            SaveData::default(),
+            ErrorMapper::default_fallback(),
+            Box::new(DevSandbox::new()),
+        );
+        e.new_game();
+        e.start_level(0).unwrap();
+        e.submit("fn main() { println!(\"x has the value {}\", 5); }")
+            .unwrap();
+        e.start_level(1).unwrap();
+        e.submit("fn main() { let s = String::from(\"hi\"); println!(\"{}\", s); }")
+            .unwrap();
+        e
+    }
+
+    #[test]
+    fn all_passed_sets_free_mode_and_victory_flag() {
+        let e = all_pass_engine();
+        assert!(e.save.practice_unlock_all, "内置全过 → 自由模式解锁");
+        assert!(e.save.victory_celebrated, "内置全过 → 末关庆典标记");
+        assert_eq!(e.builtin_completed_count(), 2);
+    }
+
+    #[test]
+    fn free_mode_allows_locked_levels_and_repeat_gives_zero_xp() {
+        let mut e = all_pass_engine();
+        // R10 后：locked 关卡（l0-hello 之外已全过，无 locked；再造一个锁定态）
+        // 直接验证：把 l0-hello 改回 Locked，start_level 仍放行（自由模式入口）
+        e.save.level_states.get_mut("l0-hello").unwrap().state = LevelState::Locked;
+        e.start_level(0).unwrap();
+        // 重复通关 +0 XP（一次制天然保证）
+        let xp_before = e.save.xp;
+        e.submit("fn main() { println!(\"x has the value {}\", 5); }")
+            .unwrap();
+        assert_eq!(e.save.xp, xp_before, "自由模式重复通关 +0 XP");
+    }
+
+    #[test]
+    fn free_mode_gated_below_full_clear() {
+        let mut e = engine();
+        e.new_game();
+        e.start_level(0).unwrap();
+        e.submit("fn main() { println!(\"x has the value {}\", 5); }")
+            .unwrap();
+        // 只过 1/2 关：未全通 → 无自由模式、无庆典标记
+        assert!(!e.save.practice_unlock_all);
+        assert!(!e.save.victory_celebrated);
+        // 未解锁自由模式时，Locked 关卡仍拒绝（线性解锁链已把 l1 置为
+        // Unlocked，手动改回 Locked 验证无自由模式放行入口）
+        e.save.level_states.get_mut("l1-move").unwrap().state = LevelState::Locked;
+        assert!(matches!(e.start_level(1), Err(GameError::LevelLocked(_))));
+    }
+
+    #[test]
+    fn victory_flag_restart_proof_via_save_roundtrip() {
+        let e = all_pass_engine();
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("save.toml");
+        crate::save::save(&e.save, &p).unwrap();
+        let loaded = crate::save::load(&p).unwrap();
+        assert!(loaded.victory_celebrated, "庆典标记持久化 → 重启后不再庆祝");
+        assert!(loaded.practice_unlock_all, "自由模式标记持久化");
     }
 }

@@ -1,7 +1,11 @@
 use egui_macroquad::egui;
-use game_core::app::{ChapterMapData, FeedbackData, GameApp, GameFlow, Input, LevelData, MenuData, Screen};
+use game_core::app::{
+    ChapterMapData, FeedbackData, GameApp, GameFlow, Input, LevelData, MenuData, Screen,
+};
 use game_core::editor::{tokenize, TokenKind};
-use game_core::engine::{hint_unlock_state, HintUnlockState};
+use game_core::engine::{
+    boss_hint_lock_remaining, boss_hint_locked, hint_unlock_state, HintUnlockState,
+};
 use game_core::error::GameError;
 use game_core::level::LevelTier;
 use game_core::ui::UiBackend;
@@ -60,6 +64,56 @@ enum Busy {
     Do,   // 下一帧真正执行提交
 }
 
+/// P3-18：通关庆祝动画（v3 §7.7 正反馈最小集：每项 ≤1s，总 ≈1s）。
+/// 帧驱动 + 墙钟兜底：stage 每满 12 帧（≈0.2s @60fps）或 300ms 推进，
+/// 4 次推进 ≈ 0.8s ≤ 1s；内容累积展示（到达后保持），不阻塞 Enter/Esc。
+#[derive(Debug, Clone)]
+struct Celebration {
+    /// 当前已展示阶段：0=未开始；1..=4 依次 = XP/进度条、下一关🔓（或🏆）、
+    /// 已自动保存、❤️+1；5 = 全部完成（导航提示全程可见）
+    stage: usize,
+    frames: u32,
+    since: std::time::Instant,
+}
+
+impl Celebration {
+    const STAGE_FRAMES: u32 = 12;
+    const STAGE_MAX_MS: u64 = 300;
+
+    fn new() -> Self {
+        Self {
+            stage: 0,
+            frames: 0,
+            since: std::time::Instant::now(),
+        }
+    }
+
+    fn reset(&mut self) {
+        *self = Self::new();
+    }
+
+    /// 每帧推进一次；全部阶段展示完（stage ≥ 5）返回 true。
+    fn tick(&mut self) -> bool {
+        if self.stage >= 5 {
+            return true;
+        }
+        self.frames += 1;
+        if self.frames >= Self::STAGE_FRAMES
+            || self.since.elapsed().as_millis() as u64 >= Self::STAGE_MAX_MS
+        {
+            self.stage += 1;
+            self.frames = 0;
+            self.since = std::time::Instant::now();
+        }
+        self.stage >= 5
+    }
+
+    /// 当前阶段内进度 0..1（XP 数字跳动 / ProgressBar 增长）
+    fn progress(&self) -> f32 {
+        (self.frames as f32 / Self::STAGE_FRAMES as f32).min(1.0)
+    }
+}
+
 pub struct GameUi {
     code_buf: String,
     last_level_id: Option<String>,
@@ -73,6 +127,12 @@ pub struct GameUi {
     toast: Option<(String, std::time::Instant)>,
     /// P2-11：参考答案二次确认弹窗是否打开（「先自己试试？」[再想想 / 查看答案]）
     ref_dialog: bool,
+    /// P3-18：通关庆祝动画状态（Feedback 通关屏驱动；离开/换关重置）
+    celebration: Celebration,
+    /// P3-18：庆祝动画绑定的反馈关卡 id（同关重玩重新播放）
+    celebration_level: Option<String>,
+    /// P3-18：存档路径（「已自动保存」阶段首次展示；由 main 注入）
+    save_path: Option<String>,
 }
 
 impl GameUi {
@@ -86,7 +146,15 @@ impl GameUi {
             offline: false,
             toast: None,
             ref_dialog: false,
+            celebration: Celebration::new(),
+            celebration_level: None,
+            save_path: None,
         }
+    }
+
+    /// P3-18：注入存档路径（通关庆祝「已自动保存」阶段展示）。
+    pub fn set_save_path(&mut self, path: impl Into<String>) {
+        self.save_path = Some(path.into());
     }
 
     /// 把 code_buf 回写进 app（TextEdit 每次改动后调用）
@@ -108,6 +176,11 @@ impl GameUi {
 
     fn draw(&mut self, ctx: &egui::Context, app: &mut GameApp) {
         let screen = app.screen().clone();
+        // P3-18：离开通关反馈屏 → 重置庆祝动画（再次通关重新播放）
+        if !matches!(&screen, Screen::Feedback(f) if f.passed) {
+            self.celebration.reset();
+            self.celebration_level = None;
+        }
         // 进入新关卡时同步 code_buf
         if let Screen::Level(d) = &screen {
             if self.last_level_id.as_deref() != Some(d.level.id.as_str()) {
@@ -136,6 +209,7 @@ impl GameUi {
             Screen::ChapterMap(m) => self.draw_map(ctx, app, &m),
             Screen::Level(d) => self.draw_level(ctx, app, &d),
             Screen::Feedback(f) => self.draw_feedback(ctx, app, &f),
+            Screen::Stats(s) => self.draw_stats(ctx, app, &s),
         }
     }
 
@@ -179,7 +253,10 @@ impl GameUi {
                     }
                     idx += 1;
                 }
-                if ui.selectable_label(m.selected == idx, "🆕 新游戏").clicked() {
+                if ui
+                    .selectable_label(m.selected == idx, "🆕 新游戏")
+                    .clicked()
+                {
                     clicked = Some(idx);
                 }
                 idx += 1;
@@ -230,6 +307,12 @@ impl GameUi {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("🗺 关卡地图");
             ui.label("按 L0 → L4 顺序推进，解锁前一关后才能进入下一关。");
+            // P3-18：统计页入口（R9 生命周期贤者起显示；引擎侧同样校验门槛）
+            if app.stats_accessible() {
+                if ui.button("📊 统计").clicked() {
+                    self.act(app, Input::OpenStats);
+                }
+            }
             // P4-26：自定义关卡加载失败 → 游戏内提示（启动日志已另行打印，游戏不崩溃）
             if !app.custom_load_errors.is_empty() {
                 ui.add_space(6.0);
@@ -245,7 +328,8 @@ impl GameUi {
                         );
                         for e in &app.custom_load_errors {
                             ui.label(
-                                egui::RichText::new(e).color(egui::Color32::from_rgb(225, 170, 160)),
+                                egui::RichText::new(e)
+                                    .color(egui::Color32::from_rgb(225, 170, 160)),
                             );
                         }
                     });
@@ -308,7 +392,69 @@ impl GameUi {
             LevelTier::L3 => "L3 生命周期/trait",
             LevelTier::L4 => "L4 挑战",
         };
-        format!("{icon} {number}. {}（{tier}）{state_str}", entry.level.title)
+        format!(
+            "{icon} {number}. {}（{tier}）{state_str}",
+            entry.level.title
+        )
+    }
+
+    /// P3-18：统计页（R9 解锁）：段位进度 + 心/XP + 各关尝试/best_time_ms + 成就图鉴。
+    fn draw_stats(
+        &mut self,
+        ctx: &egui::Context,
+        app: &mut GameApp,
+        s: &game_core::app::StatsData,
+    ) {
+        if Self::key(ctx, egui::Key::Escape) || Self::key(ctx, egui::Key::Enter) {
+            self.act(app, Input::Esc);
+            return;
+        }
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.heading("📊 统计");
+            ui.label(format!(
+                "段位：{}（R{}）· 已通关 {}/{} · XP {} · ❤️ {}",
+                s.rank.title, s.rank.level, s.completed, s.total, s.xp, s.hearts
+            ));
+            ui.separator();
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.label(egui::RichText::new("各关记录").strong());
+                    for (i, e) in s.entries.iter().enumerate() {
+                        let (icon, state_str) = match e.progress.state {
+                            game_core::save::LevelState::Passed => ("✅", "已通关"),
+                            game_core::save::LevelState::Unlocked => ("🔓", "可挑战"),
+                            game_core::save::LevelState::Locked => ("🔒", "未解锁"),
+                        };
+                        let best = e
+                            .progress
+                            .best_time_ms
+                            .map(|ms| format!("{ms} ms"))
+                            .unwrap_or_else(|| "—".into());
+                        ui.label(format!(
+                            "{icon} {}. {}（L{}）· {state_str} · 尝试 {} · 失败 {} · 最快 {best}",
+                            i + 1,
+                            e.level.title,
+                            e.level.tier.order(),
+                            e.progress.attempts,
+                            e.progress.fail_count
+                        ));
+                    }
+                    ui.add_space(10.0);
+                    ui.separator();
+                    ui.label(egui::RichText::new("成就图鉴").strong());
+                    for (id, name, unlocked) in &s.achievements {
+                        let _ = id;
+                        if *unlocked {
+                            ui.label(format!("🏅 {name} ✓"));
+                        } else {
+                            ui.label(egui::RichText::new(format!("⚪ {name}")).weak());
+                        }
+                    }
+                });
+            ui.separator();
+            ui.label(egui::RichText::new("Esc / Enter 返回地图").weak());
+        });
     }
 
     fn draw_level(&mut self, ctx: &egui::Context, app: &mut GameApp, d: &LevelData) {
@@ -353,12 +499,21 @@ impl GameUi {
                 .get(&d.level.id)
                 .map(|p| p.fail_count)
                 .unwrap_or(0);
-            if !d.level.hint_unlock.is_empty() {
-                if let Some(st) = hint_unlock_state(
-                    d.level.hints.len(),
-                    &d.level.hint_unlock,
-                    fail_count,
-                ) {
+            // P3-17：Boss 关提示门控（v3 §7.5 提示默认禁用，fail_count ≥ 5 解锁兜底）。
+            // 错误码解释卡不受影响（反馈面板照常显示，教学核心不豁免）。
+            if boss_hint_locked(d.level.is_boss, fail_count) {
+                ui.add_space(4.0);
+                ui.colored_label(
+                    egui::Color32::from_rgb(180, 160, 120),
+                    format!(
+                        "🔒 Boss 关提示已禁用（再失败 {} 次解锁）",
+                        boss_hint_lock_remaining(fail_count)
+                    ),
+                );
+            } else if !d.level.hint_unlock.is_empty() {
+                if let Some(st) =
+                    hint_unlock_state(d.level.hints.len(), &d.level.hint_unlock, fail_count)
+                {
                     self.draw_unlock_hints(ui, app, d, st);
                 }
             } else if let Some((text, cur, total)) = d.visible_hint() {
@@ -373,7 +528,9 @@ impl GameUi {
             ui.separator();
             if !self.ime_hint_shown {
                 // 弱提示：IME 不可用（egui-miniquad 无 IME 通道），中文只能粘贴
-                ui.label(egui::RichText::new("代码编辑器不支持中文输入法，中文内容请复制粘贴").weak());
+                ui.label(
+                    egui::RichText::new("代码编辑器不支持中文输入法，中文内容请复制粘贴").weak(),
+                );
                 self.ime_hint_shown = true;
             }
             // P3-19：编辑器（行号 gutter + 代码区；支持行号跳转光标）
@@ -382,7 +539,10 @@ impl GameUi {
             // P2-08：0 心禁提交（按钮置灰 + 复习引导）；编辑不禁止
             let can_submit = hearts > 0;
             ui.horizontal(|ui| {
-                if ui.add_enabled(can_submit, egui::Button::new("▶ 提交运行")).clicked() {
+                if ui
+                    .add_enabled(can_submit, egui::Button::new("▶ 提交运行"))
+                    .clicked()
+                {
                     self.busy = Busy::Show;
                 }
                 let hint_label = if !d.level.hint_unlock.is_empty() {
@@ -428,7 +588,8 @@ impl GameUi {
             // 同时请求焦点让光标绘制/闪烁并参与事件处理（events 从该光标起步）
             let ccursor = line_start_ccursor(&self.code_buf, line);
             let mut st = egui::TextEdit::load_state(ui.ctx(), edit_id).unwrap_or_default();
-            st.cursor.set_char_range(Some(egui::text::CCursorRange::one(ccursor)));
+            st.cursor
+                .set_char_range(Some(egui::text::CCursorRange::one(ccursor)));
             st.store(ui.ctx(), edit_id);
             ui.memory_mut(|m| m.request_focus(edit_id));
         }
@@ -439,10 +600,15 @@ impl GameUi {
                 ui.horizontal(|ui| {
                     // 行号 gutter（对齐用 monospace 字体）
                     let line_count = self.code_buf.lines().count().max(1);
-                    let gutter = (1..=line_count).map(|n| n.to_string()).collect::<Vec<_>>().join("\n");
+                    let gutter = (1..=line_count)
+                        .map(|n| n.to_string())
+                        .collect::<Vec<_>>()
+                        .join("\n");
                     ui.add(
                         egui::Label::new(
-                            egui::RichText::new(gutter).monospace().color(egui::Color32::from_rgb(120, 120, 120)),
+                            egui::RichText::new(gutter)
+                                .monospace()
+                                .color(egui::Color32::from_rgb(120, 120, 120)),
                         )
                         .selectable(false),
                     );
@@ -489,7 +655,12 @@ impl GameUi {
         if d.show_hint {
             ui.add_space(4.0);
             for i in 0..st.unlocked {
-                let text = format!("💡 提示 {}/{}: {}", i + 1, d.level.hints.len(), d.level.hints[i]);
+                let text = format!(
+                    "💡 提示 {}/{}: {}",
+                    i + 1,
+                    d.level.hints.len(),
+                    d.level.hints[i]
+                );
                 if i == st.expanded {
                     ui.colored_label(
                         egui::Color32::from_rgb(255, 200, 80),
@@ -571,29 +742,13 @@ impl GameUi {
         }
         egui::CentralPanel::default().show(ctx, |ui| {
             if f.passed {
-                ui.add_space(30.0);
-                ui.vertical_centered(|ui| {
-                    ui.heading(
-                        egui::RichText::new("✅ 通关！")
-                            .color(egui::Color32::from_rgb(90, 220, 130))
-                            .size(40.0),
-                    );
-                    ui.add_space(8.0);
-                    ui.label(format!("获得 {} XP · 连击 {}x · ❤️ {}", f.xp_gained, f.combo, f.hearts));
-                    ui.add_space(8.0);
-                    match &f.unlocked_next {
-                        Some(title) => {
-                            ui.label(egui::RichText::new(format!("🔓 下一关已解锁：{title}")).size(16.0));
-                        }
-                        None => {
-                            ui.label(egui::RichText::new("🏆 全部通关！").size(16.0));
-                        }
-                    }
-                    ui.add_space(8.0);
-                    ui.label(egui::RichText::new("已自动保存进度").weak());
-                    ui.add_space(8.0);
-                    ui.label(egui::RichText::new("按 Enter 进入下一关").weak());
-                });
+                // P3-18：进入通关反馈 → 启动/继续帧驱动庆祝动画（Enter/Esc 随时可离开）
+                if self.celebration_level.as_deref() != Some(f.level_id.as_str()) {
+                    self.celebration.reset();
+                    self.celebration_level = Some(f.level_id.clone());
+                }
+                self.celebration.tick();
+                self.draw_celebration(ui, app, f);
             } else {
                 ui.add_space(12.0);
                 self.draw_feedback_panel(ui, app, f, true);
@@ -601,12 +756,98 @@ impl GameUi {
         });
     }
 
+    /// P3-18：通关庆祝最小集（v3 §7.7，每项 ≤1s、总 ≈1s，帧驱动无动画库）：
+    /// ① XP 数字跳动 + ProgressBar 增长（+XP）→ ② 下一关标题 + 🔓 徽章
+    /// （末关 →「🏆 全部通关！」一次性庆典 + 统计页入口）→ ③「已自动保存」+
+    /// 首次显示存档路径 → ④ ❤️ +1 → ⑤ Enter/Esc 导航提示（全程可见）。
+    /// 阶段内容累积展示（到达后保持），动画不阻塞按键。
+    fn draw_celebration(&mut self, ui: &mut egui::Ui, app: &mut GameApp, f: &FeedbackData) {
+        // stage 0（首帧未推进）按 1 展示：第 1 帧起 XP 数字即开始跳动
+        let stage = self.celebration.stage.max(1);
+        let prog = self.celebration.progress();
+        ui.add_space(24.0);
+        ui.vertical_centered(|ui| {
+            ui.heading(
+                egui::RichText::new("✅ 通关！")
+                    .color(egui::Color32::from_rgb(90, 220, 130))
+                    .size(36.0),
+            );
+            // ① XP 数字跳动 + ProgressBar 增长
+            if stage >= 1 {
+                ui.add_space(12.0);
+                let xp_total = app.save_ref().xp;
+                let xp_prev = xp_total.saturating_sub(f.xp_gained);
+                let shown = xp_prev + (f.xp_gained as f32 * prog) as u32;
+                ui.label(
+                    egui::RichText::new(format!("XP {xp_prev} → {shown}"))
+                        .size(20.0)
+                        .strong()
+                        .color(egui::Color32::from_rgb(255, 210, 90)),
+                );
+                let frac = if f.xp_gained > 0 { prog } else { 0.0 };
+                ui.add(
+                    egui::ProgressBar::new(frac)
+                        .desired_width(280.0)
+                        .text(format!("+{} XP", f.xp_gained)),
+                );
+            }
+            // ② 下一关标题 + 🔓 徽章（末关 → 🏆 一次性庆典 + 统计入口）
+            if stage >= 2 {
+                ui.add_space(8.0);
+                if f.victory {
+                    ui.label(
+                        egui::RichText::new("🏆 全部通关！")
+                            .size(24.0)
+                            .strong()
+                            .color(egui::Color32::from_rgb(255, 200, 80)),
+                    );
+                    if ui.button("📊 查看统计").clicked() {
+                        self.act(app, Input::OpenStats);
+                    }
+                } else if let Some(title) = &f.unlocked_next {
+                    ui.label(egui::RichText::new(format!("🔓 下一关已解锁：{title}")).size(16.0));
+                }
+            }
+            // ③「已自动保存」+ 首次显示存档路径
+            if stage >= 3 {
+                ui.add_space(8.0);
+                ui.label(egui::RichText::new("已自动保存").weak());
+                if let Some(p) = &self.save_path {
+                    ui.label(egui::RichText::new(p).weak().monospace().size(12.0));
+                }
+            }
+            // ④ ❤️ +1（满心时提示已满）
+            if stage >= 4 {
+                ui.add_space(8.0);
+                if f.hearts_gained > 0 {
+                    ui.label(
+                        egui::RichText::new(format!("❤️ +1（当前 {}）", f.hearts))
+                            .color(egui::Color32::from_rgb(240, 130, 150)),
+                    );
+                } else {
+                    ui.label(egui::RichText::new(format!("❤️ 已满（{}/5）", f.hearts)).weak());
+                }
+            }
+            // ⑤ Enter/Esc 导航提示（全程可见，动画不阻塞）
+            ui.add_space(10.0);
+            ui.label(egui::RichText::new("Enter 进下一关 · Esc 回地图").weak());
+        });
+    }
+
     /// P1-03 失败反馈面板主体（Feedback 屏与编辑器底部固定区共用）。
     /// `show_nav_hint`：Feedback 屏提示「Enter 返回编辑 / Esc 回地图」，编辑器内不重复。
-    fn draw_feedback_panel(&mut self, ui: &mut egui::Ui, app: &mut GameApp, f: &FeedbackData, show_nav_hint: bool) {
+    fn draw_feedback_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        app: &mut GameApp,
+        f: &FeedbackData,
+        show_nav_hint: bool,
+    ) {
         // 防挫败语气（v3 §7.6）：「❌ 未通过」→「🔧 还差一点」
         ui.horizontal(|ui| {
-            ui.heading(egui::RichText::new("🔧 还差一点").color(egui::Color32::from_rgb(255, 180, 80)));
+            ui.heading(
+                egui::RichText::new("🔧 还差一点").color(egui::Color32::from_rgb(255, 180, 80)),
+            );
             ui.label(egui::RichText::new(format!("❤️ {}", f.hearts)).weak());
         });
         self.draw_toast(ui);
@@ -621,8 +862,11 @@ impl GameUi {
                     if f.errors.len() > 1 {
                         ui.add_space(4.0);
                         ui.label(
-                            egui::RichText::new(format!("还有 {} 个错误（点击展开）", f.errors.len() - 1))
-                                .weak(),
+                            egui::RichText::new(format!(
+                                "还有 {} 个错误（点击展开）",
+                                f.errors.len() - 1
+                            ))
+                            .weak(),
                         );
                         for (i, card) in f.errors.iter().enumerate().skip(1) {
                             egui::CollapsingHeader::new(
@@ -962,7 +1206,11 @@ fn probe_online() -> bool {
     use std::net::{TcpStream, ToSocketAddrs};
     use std::time::Duration;
 
-    let addr = match "rustwiki.org:80".to_socket_addrs().ok().and_then(|mut it| it.next()) {
+    let addr = match "rustwiki.org:80"
+        .to_socket_addrs()
+        .ok()
+        .and_then(|mut it| it.next())
+    {
         Some(a) => a,
         None => return false,
     };
@@ -1035,7 +1283,11 @@ mod tests {
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
             ui.draw(ctx, &mut app);
         });
-        assert!(ui.code_buf.contains("fn main"), "code_buf 未同步: {}", ui.code_buf);
+        assert!(
+            ui.code_buf.contains("fn main"),
+            "code_buf 未同步: {}",
+            ui.code_buf
+        );
         assert!(matches!(app.screen(), Screen::Level(_)));
     }
 
@@ -1049,7 +1301,8 @@ mod tests {
         install_fonts(&ctx);
         let _ = ctx.run(egui::RawInput::default(), |_| {}); // 应用新字体定义
         let prop_ok = ctx.fonts(|f| f.has_glyphs(&egui::FontId::proportional(16.0), "你好，变量"));
-        let mono_ok = ctx.fonts(|f| f.has_glyphs(&egui::FontId::monospace(16.0), "let x = 5; fn main"));
+        let mono_ok =
+            ctx.fonts(|f| f.has_glyphs(&egui::FontId::monospace(16.0), "let x = 5; fn main"));
         assert!(prop_ok, "Proportional 应能用 Noto Sans SC 渲染中文正文");
         assert!(mono_ok, "Monospace 应能用 maple 渲染代码");
         // 装字体后照常绘制关卡，弱提示文本不丢
@@ -1071,7 +1324,11 @@ mod tests {
     #[test]
     fn zero_hearts_disables_submit_and_shows_review_message() {
         let ctx = egui::Context::default();
-        let save = SaveData { hearts: 0, streak_days: 3, ..SaveData::default() };
+        let save = SaveData {
+            hearts: 0,
+            streak_days: 3,
+            ..SaveData::default()
+        };
         let mut app = test_app_with_save(save);
         let mut ui = GameUi::new();
         app.handle(Input::Enter).unwrap(); // 进入关卡
@@ -1082,8 +1339,14 @@ mod tests {
             shapes_contain_text(&out.shapes, "❤️ 已空：复习关卡说明可回 1 心"),
             "0 心应显示复习引导文案"
         );
-        assert!(shapes_contain_text(&out.shapes, "▶ 提交运行"), "提交按钮仍在（add_enabled 置灰）");
-        assert!(shapes_contain_text(&out.shapes, "连续 3 天"), "状态栏应显示连续天数");
+        assert!(
+            shapes_contain_text(&out.shapes, "▶ 提交运行"),
+            "提交按钮仍在（add_enabled 置灰）"
+        );
+        assert!(
+            shapes_contain_text(&out.shapes, "连续 3 天"),
+            "状态栏应显示连续天数"
+        );
         // 0 心绘制不触发提交（busy 保持 None）
         assert_eq!(ui.busy, Busy::None);
     }
@@ -1092,35 +1355,57 @@ mod tests {
     fn review_button_visible_below_full_hearts_only() {
         // 心 < 5 → 复习按钮可见；心 > 0 不显示 0 心提示
         let ctx = egui::Context::default();
-        let mut app = test_app_with_save(SaveData { hearts: 3, ..SaveData::default() });
+        let mut app = test_app_with_save(SaveData {
+            hearts: 3,
+            ..SaveData::default()
+        });
         let mut ui = GameUi::new();
         app.handle(Input::Enter).unwrap();
         let out = ctx.run(egui::RawInput::default(), |ctx| {
             ui.draw(ctx, &mut app);
         });
-        assert!(shapes_contain_text(&out.shapes, "复习关卡说明"), "心 <5 显示复习按钮");
-        assert!(!shapes_contain_text(&out.shapes, "❤️ 已空"), "心 >0 不显示 0 心提示");
+        assert!(
+            shapes_contain_text(&out.shapes, "复习关卡说明"),
+            "心 <5 显示复习按钮"
+        );
+        assert!(
+            !shapes_contain_text(&out.shapes, "❤️ 已空"),
+            "心 >0 不显示 0 心提示"
+        );
 
         // 满心（cap 5）→ 复习按钮隐藏（无可回）
-        let mut app2 = test_app_with_save(SaveData { hearts: 5, ..SaveData::default() });
+        let mut app2 = test_app_with_save(SaveData {
+            hearts: 5,
+            ..SaveData::default()
+        });
         let mut ui2 = GameUi::new();
         app2.handle(Input::Enter).unwrap();
         let out2 = ctx.run(egui::RawInput::default(), |ctx| {
             ui2.draw(ctx, &mut app2);
         });
-        assert!(!shapes_contain_text(&out2.shapes, "复习关卡说明"), "满心隐藏复习按钮");
+        assert!(
+            !shapes_contain_text(&out2.shapes, "复习关卡说明"),
+            "满心隐藏复习按钮"
+        );
     }
 
     #[test]
     fn streak_hidden_when_zero_days() {
         let ctx = egui::Context::default();
-        let mut app = test_app_with_save(SaveData { hearts: 3, streak_days: 0, ..SaveData::default() });
+        let mut app = test_app_with_save(SaveData {
+            hearts: 3,
+            streak_days: 0,
+            ..SaveData::default()
+        });
         let mut ui = GameUi::new();
         app.handle(Input::Enter).unwrap();
         let out = ctx.run(egui::RawInput::default(), |ctx| {
             ui.draw(ctx, &mut app);
         });
-        assert!(!shapes_contain_text(&out.shapes, "连续 0 天"), "未活跃不显示连续天数");
+        assert!(
+            !shapes_contain_text(&out.shapes, "连续 0 天"),
+            "未活跃不显示连续天数"
+        );
         assert!(shapes_contain_text(&out.shapes, "❤️ 3"), "头部应显示心数");
     }
 
@@ -1159,7 +1444,11 @@ mod tests {
             galley = Some(ctx.fonts(|f| f.layout_job(job.clone())));
         });
         let galley = galley.expect("布局应在 run 期间完成");
-        assert!(galley.rows.len() > 1, "100px 宽的 CJK 长行应换行成多行，实际 {} 行", galley.rows.len());
+        assert!(
+            galley.rows.len() > 1,
+            "100px 宽的 CJK 长行应换行成多行，实际 {} 行",
+            galley.rows.len()
+        );
 
         // 旧行为（wrap_width = INFINITY）回归对照：只有一行
         let job_inf = code_layout_job(&cjk, f32::INFINITY, &resolved);
@@ -1167,7 +1456,11 @@ mod tests {
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
             galley_inf = Some(ctx.fonts(|f| f.layout_job(job_inf.clone())));
         });
-        assert_eq!(galley_inf.unwrap().rows.len(), 1, "INFINITY 宽度下 CJK 长行应保持单行");
+        assert_eq!(
+            galley_inf.unwrap().rows.len(),
+            1,
+            "INFINITY 宽度下 CJK 长行应保持单行"
+        );
     }
 
     /// P1-06：代码区字号必须来自 TextStyle::Monospace（与行号 gutter 同源），禁止硬编码 14/12 混用。
@@ -1194,16 +1487,25 @@ mod tests {
         let out = ctx.run(egui::RawInput::default(), |ctx| {
             ui.draw(ctx, &mut app);
         });
-        let expected = egui::TextStyle::Monospace.resolve(&egui::Style::default()).size;
+        let expected = egui::TextStyle::Monospace
+            .resolve(&egui::Style::default())
+            .size;
         let mut code_sizes: Vec<f32> = Vec::new();
         let mut gutter_sizes: Vec<f32> = Vec::new();
         for clipped in &out.shapes {
             if let egui::Shape::Text(t) = &clipped.shape {
                 let text = t.galley.text();
-                let sizes: Vec<f32> = t.galley.job.sections.iter().map(|s| s.format.font_id.size).collect();
+                let sizes: Vec<f32> = t
+                    .galley
+                    .job
+                    .sections
+                    .iter()
+                    .map(|s| s.format.font_id.size)
+                    .collect();
                 if text.contains("fn main") {
                     code_sizes.extend(sizes);
-                } else if !text.is_empty() && text.chars().all(|c| c.is_ascii_digit() || c == '\n') {
+                } else if !text.is_empty() && text.chars().all(|c| c.is_ascii_digit() || c == '\n')
+                {
                     gutter_sizes.extend(sizes);
                 }
             }
@@ -1211,7 +1513,8 @@ mod tests {
         assert!(!code_sizes.is_empty(), "应绘制出代码区文本");
         assert!(!gutter_sizes.is_empty(), "应绘制出行号 gutter");
         assert!(
-            code_sizes.iter().all(|&s| s == expected) && gutter_sizes.iter().all(|&s| s == expected),
+            code_sizes.iter().all(|&s| s == expected)
+                && gutter_sizes.iter().all(|&s| s == expected),
             "代码区 {code_sizes:?} 与 gutter {gutter_sizes:?} 字号不一致（期望 {expected}）"
         );
     }
@@ -1269,14 +1572,20 @@ mod tests {
             xp_gained: 0,
             combo: 0,
             hearts: 3,
+            hearts_gained: 0,
             errors,
             expectation: None,
             panic: None,
             unlocked_next: None,
+            victory: false,
         }
     }
 
-    fn draw_panel(ctx: &egui::Context, game_ui: &mut GameUi, fb: &FeedbackData) -> egui::FullOutput {
+    fn draw_panel(
+        ctx: &egui::Context,
+        game_ui: &mut GameUi,
+        fb: &FeedbackData,
+    ) -> egui::FullOutput {
         ctx.run(egui::RawInput::default(), |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
                 game_ui.draw_feedback_panel(ui, &mut test_app(), fb, true);
@@ -1289,24 +1598,54 @@ mod tests {
     fn feedback_panel_expands_only_first_error() {
         let ctx = egui::Context::default();
         let fb = fail_fb(vec![
-            card("E0425", Some(2), "找不到名字：变量、函数或类型未定义", "检查拼写或先定义", Some("https://doc.rust-lang.org/error_codes/E0425.html")),
-            card("E0308", Some(5), "类型不匹配：表达式的实际类型与期望类型不一致", "", None),
+            card(
+                "E0425",
+                Some(2),
+                "找不到名字：变量、函数或类型未定义",
+                "检查拼写或先定义",
+                Some("https://doc.rust-lang.org/error_codes/E0425.html"),
+            ),
+            card(
+                "E0308",
+                Some(5),
+                "类型不匹配：表达式的实际类型与期望类型不一致",
+                "",
+                None,
+            ),
         ]);
         let mut game_ui = GameUi::new();
         let out = draw_panel(&ctx, &mut game_ui, &fb);
-        assert!(shapes_contain_text(&out.shapes, "🔧 还差一点"), "失败语气应为「还差一点」");
-        assert!(shapes_contain_text(&out.shapes, "找不到名字"), "第一条 zh 应默认展开");
+        assert!(
+            shapes_contain_text(&out.shapes, "🔧 还差一点"),
+            "失败语气应为「还差一点」"
+        );
+        assert!(
+            shapes_contain_text(&out.shapes, "找不到名字"),
+            "第一条 zh 应默认展开"
+        );
         // ① 头行组件：徽章 + 行号 + 中文标题（分开渲染）
         assert!(shapes_contain_text(&out.shapes, "E0425"), "错误码徽章缺失");
         assert!(shapes_contain_text(&out.shapes, "第 2 行"), "行号缺失");
-        assert!(shapes_contain_text(&out.shapes, "还有 1 个错误"), "「还有 N 个错误」提示缺失");
-        assert!(shapes_contain_text(&out.shapes, "E0308 · 第 5 行 · 类型不匹配"), "第二条折叠头缺失");
+        assert!(
+            shapes_contain_text(&out.shapes, "还有 1 个错误"),
+            "「还有 N 个错误」提示缺失"
+        );
+        assert!(
+            shapes_contain_text(&out.shapes, "E0308 · 第 5 行 · 类型不匹配"),
+            "第二条折叠头缺失"
+        );
         assert!(
             !shapes_contain_text(&out.shapes, "类型不匹配：表达式的实际类型与期望类型不一致"),
             "第二条 zh 应折叠隐藏"
         );
-        assert!(!shapes_contain_text(&out.shapes, "检查拼写或先定义"), "「怎么改」应默认折叠");
-        assert!(!shapes_contain_text(&out.shapes, "rustc summary"), "rustc 原文应默认折叠");
+        assert!(
+            !shapes_contain_text(&out.shapes, "检查拼写或先定义"),
+            "「怎么改」应默认折叠"
+        );
+        assert!(
+            !shapes_contain_text(&out.shapes, "rustc summary"),
+            "rustc 原文应默认折叠"
+        );
     }
 
     /// panic 分支：分类标题可见，原始信息折叠
@@ -1320,8 +1659,14 @@ mod tests {
         );
         let mut game_ui = GameUi::new();
         let out = draw_panel(&ctx, &mut game_ui, &fb);
-        assert!(shapes_contain_text(&out.shapes, "程序运行崩溃（索引越界）"), "panic 分类标题缺失");
-        assert!(!shapes_contain_text(&out.shapes, "index out of bounds"), "净化消息应默认折叠");
+        assert!(
+            shapes_contain_text(&out.shapes, "程序运行崩溃（索引越界）"),
+            "panic 分类标题缺失"
+        );
+        assert!(
+            !shapes_contain_text(&out.shapes, "index out of bounds"),
+            "净化消息应默认折叠"
+        );
     }
 
     /// 输出不符：两栏 diff（期望/实际表头可见）
@@ -1335,8 +1680,14 @@ mod tests {
         });
         let mut game_ui = GameUi::new();
         let out = draw_panel(&ctx, &mut game_ui, &fb);
-        assert!(shapes_contain_text(&out.shapes, "期望输出"), "diff 期望列表头缺失");
-        assert!(shapes_contain_text(&out.shapes, "实际输出"), "diff 实际列表头缺失");
+        assert!(
+            shapes_contain_text(&out.shapes, "期望输出"),
+            "diff 期望列表头缺失"
+        );
+        assert!(
+            shapes_contain_text(&out.shapes, "实际输出"),
+            "diff 实际列表头缺失"
+        );
     }
 
     /// 无 E 码错误 → fallback 兜底卡（非空白）正常渲染
@@ -1352,8 +1703,14 @@ mod tests {
         )]);
         let mut game_ui = GameUi::new();
         let out = draw_panel(&ctx, &mut game_ui, &fb);
-        assert!(shapes_contain_text(&out.shapes, "EUNKNOWN"), "兜底卡徽章缺失");
-        assert!(shapes_contain_text(&out.shapes, "编译错误"), "兜底卡 zh 非空白");
+        assert!(
+            shapes_contain_text(&out.shapes, "EUNKNOWN"),
+            "兜底卡徽章缺失"
+        );
+        assert!(
+            shapes_contain_text(&out.shapes, "编译错误"),
+            "兜底卡 zh 非空白"
+        );
     }
 
     /// 链接降级：offline → 灰字提示（不渲染可点链接）；online → 可点链接
@@ -1374,11 +1731,17 @@ mod tests {
             shapes_contain_text(&out.shapes, "当前离线：概念已内置在讲解卡片中"),
             "离线灰字提示缺失"
         );
-        assert!(!shapes_contain_text(&out.shapes, "概念详解"), "离线不应渲染可点链接");
+        assert!(
+            !shapes_contain_text(&out.shapes, "概念详解"),
+            "离线不应渲染可点链接"
+        );
 
         let mut online_ui = GameUi::new();
         let out2 = draw_panel(&ctx, &mut online_ui, &fb);
-        assert!(shapes_contain_text(&out2.shapes, "概念详解"), "在线应渲染链接");
+        assert!(
+            shapes_contain_text(&out2.shapes, "概念详解"),
+            "在线应渲染链接"
+        );
     }
 
     /// 面板在返回编辑器后保留（底部固定）：真实提交失败 → Enter 回编辑 → 绘制出面板
@@ -1434,8 +1797,7 @@ mod tests {
         shapes.iter().any(|clipped| match &clipped.shape {
             egui::Shape::Text(t) => {
                 t.galley.text().contains(needle)
-                    && t
-                        .galley
+                    && t.galley
                         .job
                         .sections
                         .iter()
@@ -1461,7 +1823,10 @@ mod tests {
         let fb_none = fail_fb(vec![card("EUNKNOWN", None, "编译错误", "", None)]);
         let mut game_ui2 = GameUi::new();
         let out2 = draw_panel(&ctx, &mut game_ui2, &fb_none);
-        assert!(!shapes_contain_text(&out2.shapes, "第 "), "line=None 不渲染行号");
+        assert!(
+            !shapes_contain_text(&out2.shapes, "第 "),
+            "line=None 不渲染行号"
+        );
     }
 
     #[test]
@@ -1490,7 +1855,8 @@ mod tests {
             if let egui::Shape::Text(t) = &c.shape {
                 if t.galley.text() == "第 2 行" {
                     // 点击标签中心
-                    line_pos = Some(t.pos + egui::vec2(t.galley.size().x / 2.0, t.galley.size().y / 2.0));
+                    line_pos =
+                        Some(t.pos + egui::vec2(t.galley.size().x / 2.0, t.galley.size().y / 2.0));
                 }
             }
         });
@@ -1502,19 +1868,32 @@ mod tests {
             modifiers: egui::Modifiers::default(),
         };
         // 帧 2：按下（PointerMoved + PointerButton 更新指针状态与 press_origin）
-        ctx.run(raw(vec![egui::Event::PointerMoved(pos), button(true)]), |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
-                game_ui.draw_feedback_panel(ui, &mut app, &fb, true);
-            });
-        });
+        let _ = ctx.run(
+            raw(vec![egui::Event::PointerMoved(pos), button(true)]),
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    game_ui.draw_feedback_panel(ui, &mut app, &fb, true);
+                });
+            },
+        );
         // 帧 3：释放（click 在 release 触发）
-        ctx.run(raw(vec![egui::Event::PointerMoved(pos), button(false)]), |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
-                game_ui.draw_feedback_panel(ui, &mut app, &fb, true);
-            });
-        });
-        assert_eq!(app.focus_line, Some(1), "点击「第 2 行」→ 跳转目标 0-based 1");
-        assert!(matches!(app.screen(), Screen::Level(_)), "点击行号应回到编辑器屏");
+        let _ = ctx.run(
+            raw(vec![egui::Event::PointerMoved(pos), button(false)]),
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    game_ui.draw_feedback_panel(ui, &mut app, &fb, true);
+                });
+            },
+        );
+        assert_eq!(
+            app.focus_line,
+            Some(1),
+            "点击「第 2 行」→ 跳转目标 0-based 1"
+        );
+        assert!(
+            matches!(app.screen(), Screen::Level(_)),
+            "点击行号应回到编辑器屏"
+        );
     }
 
     #[test]
@@ -1524,14 +1903,14 @@ mod tests {
         let mut game_ui = GameUi::new();
         app.handle(Input::Enter).unwrap();
         // 首帧：同步 code_buf
-        ctx.run(egui::RawInput::default(), |ctx| {
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
             game_ui.draw(ctx, &mut app);
         });
         let code = "fn main() {\n    let x = 1;\n    println!(\"hi\");\n}";
         game_ui.code_buf = code.into();
         game_ui.sync_code(&mut app);
         app.focus_line = Some(2); // 第 3 行（0-based）
-        ctx.run(egui::RawInput::default(), |ctx| {
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
             game_ui.draw(ctx, &mut app);
         });
         assert_eq!(app.focus_line, None, "跳转应用后清除（一次性）");
@@ -1546,7 +1925,11 @@ mod tests {
         let id = captured.expect("应捕获编辑器 id");
         let st = egui::TextEdit::load_state(&ctx, id).expect("编辑器应有持久化光标状态");
         let cc = st.cursor.char_range().expect("应有光标范围");
-        let expected = code.split('\n').take(2).map(|l| l.chars().count() + 1).sum::<usize>();
+        let expected = code
+            .split('\n')
+            .take(2)
+            .map(|l| l.chars().count() + 1)
+            .sum::<usize>();
         assert_eq!(cc.primary.index, expected, "光标应落在第 3 行行首");
     }
 
@@ -1563,13 +1946,13 @@ mod tests {
         let mut app = test_app();
         let mut game_ui = GameUi::new();
         app.handle(Input::Enter).unwrap();
-        ctx.run(egui::RawInput::default(), |ctx| {
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
             game_ui.draw(ctx, &mut app);
         });
         game_ui.code_buf = code.into();
         game_ui.sync_code(&mut app);
         app.focus_line = Some(99);
-        ctx.run(egui::RawInput::default(), |ctx| {
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
             game_ui.draw(ctx, &mut app);
         });
         let mut captured = None;
@@ -1581,7 +1964,11 @@ mod tests {
         let id = captured.expect("应捕获编辑器 id");
         let st = egui::TextEdit::load_state(&ctx, id).expect("编辑器应有持久化光标状态");
         let cc = st.cursor.char_range().unwrap();
-        assert_eq!(cc.primary.index, code.chars().count(), "越界跳转光标在文件末尾");
+        assert_eq!(
+            cc.primary.index,
+            code.chars().count(),
+            "越界跳转光标在文件末尾"
+        );
     }
 
     #[test]
@@ -1591,18 +1978,18 @@ mod tests {
         let mut app = test_app();
         let mut game_ui = GameUi::new();
         app.handle(Input::Enter).unwrap();
-        ctx.run(egui::RawInput::default(), |ctx| {
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
             game_ui.draw(ctx, &mut app);
         });
         let code = "a\nbb\nccc\ndddd";
         game_ui.code_buf = code.into();
         game_ui.sync_code(&mut app);
         app.focus_line = Some(1); // 第 2 行
-        ctx.run(egui::RawInput::default(), |ctx| {
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
             game_ui.draw(ctx, &mut app);
         });
         app.focus_line = Some(3); // 第 4 行
-        ctx.run(egui::RawInput::default(), |ctx| {
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
             game_ui.draw(ctx, &mut app);
         });
         // 与 draw_editor 完全同路径取 id（CentralPanel 固定 ui id + make_persistent_id）
@@ -1615,8 +2002,15 @@ mod tests {
         let id = captured.expect("应捕获编辑器 id");
         let st = egui::TextEdit::load_state(&ctx, id).unwrap();
         let cc = st.cursor.char_range().unwrap();
-        let expected = code.split('\n').take(3).map(|l| l.chars().count() + 1).sum::<usize>();
-        assert_eq!(cc.primary.index, expected, "第二次跳转覆盖第一次（光标在第 4 行行首）");
+        let expected = code
+            .split('\n')
+            .take(3)
+            .map(|l| l.chars().count() + 1)
+            .sum::<usize>();
+        assert_eq!(
+            cc.primary.index, expected,
+            "第二次跳转覆盖第一次（光标在第 4 行行首）"
+        );
     }
 
     // ===== P2-11：hint 失败联动 UI（headless）=====
@@ -1655,7 +2049,10 @@ mod tests {
         let out1 = ctx.run(egui::RawInput::default(), |ctx| {
             ui1.draw(ctx, &mut app1);
         });
-        assert!(!shapes_contain_text(&out1.shapes, "查看参考答案"), "fc=1 不应出现参考答案按钮");
+        assert!(
+            !shapes_contain_text(&out1.shapes, "查看参考答案"),
+            "fc=1 不应出现参考答案按钮"
+        );
         // fc=4：出现
         let mut app4 = unlock_hint_test_app();
         app4.handle(Input::Enter).unwrap();
@@ -1664,8 +2061,14 @@ mod tests {
         let out4 = ctx.run(egui::RawInput::default(), |ctx| {
             ui4.draw(ctx, &mut app4);
         });
-        assert!(shapes_contain_text(&out4.shapes, "查看参考答案"), "fc=4 应出现参考答案按钮");
-        assert!(!shapes_contain_text(&out4.shapes, "先自己试试"), "未点击不弹确认框");
+        assert!(
+            shapes_contain_text(&out4.shapes, "查看参考答案"),
+            "fc=4 应出现参考答案按钮"
+        );
+        assert!(
+            !shapes_contain_text(&out4.shapes, "先自己试试"),
+            "未点击不弹确认框"
+        );
     }
 
     #[test]
@@ -1680,20 +2083,40 @@ mod tests {
         let out_open = ctx.run(egui::RawInput::default(), |ctx| {
             game_ui.draw(ctx, &mut app);
         });
-        assert!(shapes_contain_text(&out_open.shapes, "先自己试试？"), "确认弹窗文案");
+        assert!(
+            shapes_contain_text(&out_open.shapes, "先自己试试？"),
+            "确认弹窗文案"
+        );
         assert!(shapes_contain_text(&out_open.shapes, "再想想"), "拒绝按钮");
-        assert!(shapes_contain_text(&out_open.shapes, "查看答案"), "确认按钮");
-        assert!(!shapes_contain_text(&out_open.shapes, "📖 参考答案"), "确认前不展示答案块");
+        assert!(
+            shapes_contain_text(&out_open.shapes, "查看答案"),
+            "确认按钮"
+        );
+        assert!(
+            !shapes_contain_text(&out_open.shapes, "📖 参考答案"),
+            "确认前不展示答案块"
+        );
         // 拒绝
         game_ui.answer_reference(&mut app, false);
         assert!(!game_ui.ref_dialog, "拒绝后弹窗关闭");
         let out_rej = ctx.run(egui::RawInput::default(), |ctx| {
             game_ui.draw(ctx, &mut app);
         });
-        assert!(!shapes_contain_text(&out_rej.shapes, "先自己试试？"), "拒绝后弹窗消失");
-        assert!(!shapes_contain_text(&out_rej.shapes, "📖 参考答案"), "拒绝后不展示代码");
+        assert!(
+            !shapes_contain_text(&out_rej.shapes, "先自己试试？"),
+            "拒绝后弹窗消失"
+        );
+        assert!(
+            !shapes_contain_text(&out_rej.shapes, "📖 参考答案"),
+            "拒绝后不展示代码"
+        );
         assert_eq!(
-            app.engine.save.level_states.get("h").map(|p| p.hints_used.clone()).unwrap_or_default(),
+            app.engine
+                .save
+                .level_states
+                .get("h")
+                .map(|p| p.hints_used.clone())
+                .unwrap_or_default(),
             Vec::<u32>::new(),
             "拒绝不记录查看"
         );
@@ -1715,8 +2138,14 @@ mod tests {
         let out_conf = ctx.run(egui::RawInput::default(), |ctx| {
             game_ui.draw(ctx, &mut app);
         });
-        assert!(shapes_contain_text(&out_conf.shapes, "📖 参考答案"), "确认后展示答案块");
-        assert!(shapes_contain_text(&out_conf.shapes, "解法"), "答案块含最后一条 hint 内容");
+        assert!(
+            shapes_contain_text(&out_conf.shapes, "📖 参考答案"),
+            "确认后展示答案块"
+        );
+        assert!(
+            shapes_contain_text(&out_conf.shapes, "解法"),
+            "答案块含最后一条 hint 内容"
+        );
     }
 
     #[test]
@@ -1730,9 +2159,18 @@ mod tests {
         let out = ctx.run(egui::RawInput::default(), |ctx| {
             game_ui.draw(ctx, &mut app);
         });
-        assert!(shapes_contain_text(&out.shapes, "💡 提示 1/3: 概念"), "hint1 列出");
-        assert!(shapes_contain_text(&out.shapes, "💡 提示 2/3: 定位"), "hint2 列出");
-        assert!(shapes_contain_text(&out.shapes, "💡 提示 3/3: 解法"), "hint3 列出（fc=3 全解锁）");
+        assert!(
+            shapes_contain_text(&out.shapes, "💡 提示 1/3: 概念"),
+            "hint1 列出"
+        );
+        assert!(
+            shapes_contain_text(&out.shapes, "💡 提示 2/3: 定位"),
+            "hint2 列出"
+        );
+        assert!(
+            shapes_contain_text(&out.shapes, "💡 提示 3/3: 解法"),
+            "hint3 列出（fc=3 全解锁）"
+        );
         // fc=3 无参考答案按钮
         assert!(!shapes_contain_text(&out.shapes, "查看参考答案"));
     }
@@ -1766,11 +2204,23 @@ mod tests {
         let out = ctx.run(egui::RawInput::default(), |ctx| {
             ui.draw(ctx, &mut app);
         });
-        assert!(shapes_contain_text(&out.shapes, "自定义关卡"), "存在自定义关卡时应显示章节标题");
-        assert!(shapes_contain_text(&out.shapes, "自定义关一"), "自定义关卡条目应渲染");
-        assert!(shapes_contain_text(&out.shapes, "内置一"), "内置关卡条目应渲染");
+        assert!(
+            shapes_contain_text(&out.shapes, "自定义关卡"),
+            "存在自定义关卡时应显示章节标题"
+        );
+        assert!(
+            shapes_contain_text(&out.shapes, "自定义关一"),
+            "自定义关卡条目应渲染"
+        );
+        assert!(
+            shapes_contain_text(&out.shapes, "内置一"),
+            "内置关卡条目应渲染"
+        );
         // 章节内序号从 1 开始：自定义关一 → 「1. 自定义关一」
-        assert!(shapes_contain_text(&out.shapes, "1. 自定义关一"), "自定义章节内序号应从 1 开始");
+        assert!(
+            shapes_contain_text(&out.shapes, "1. 自定义关一"),
+            "自定义章节内序号应从 1 开始"
+        );
     }
 
     #[test]
@@ -1781,7 +2231,10 @@ mod tests {
         let out = ctx.run(egui::RawInput::default(), |ctx| {
             ui.draw(ctx, &mut app);
         });
-        assert!(!shapes_contain_text(&out.shapes, "自定义关卡"), "无自定义关卡时隐藏章节");
+        assert!(
+            !shapes_contain_text(&out.shapes, "自定义关卡"),
+            "无自定义关卡时隐藏章节"
+        );
     }
 
     #[test]
@@ -1803,7 +2256,13 @@ mod tests {
         let out = ctx.run(egui::RawInput::default(), |ctx| {
             ui.draw(ctx, &mut app);
         });
-        assert!(shapes_contain_text(&out.shapes, "自定义关卡加载失败"), "地图页应显示加载失败警示");
-        assert!(shapes_contain_text(&out.shapes, "bad.toml"), "警示内容含文件名");
+        assert!(
+            shapes_contain_text(&out.shapes, "自定义关卡加载失败"),
+            "地图页应显示加载失败警示"
+        );
+        assert!(
+            shapes_contain_text(&out.shapes, "bad.toml"),
+            "警示内容含文件名"
+        );
     }
 }

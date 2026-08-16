@@ -53,6 +53,8 @@ async fn main() {
         custom_errors.iter().map(|e| e.message()).collect(),
     );
     let mut ui = GameUi::new();
+    // P3-18：通关庆祝「已自动保存」阶段首次显示存档路径
+    ui.set_save_path(save_path().display().to_string());
     if let Err(e) = ui.run(&mut app).await {
         eprintln!("运行错误: {e}");
     }
