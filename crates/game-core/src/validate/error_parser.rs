@@ -32,16 +32,16 @@ pub fn parse_rustc_stderr(stderr: &str) -> Vec<CompileError> {
             // "error[E0308]: mismatched types" -> code = 5 chars after "error[E"
             let code = t[6..(6 + 5).min(t.len())].to_string();
             let message = t[(6 + 5).min(t.len())..]
-                .trim_start_matches(|c| c == ']' || c == ':')
+                .trim_start_matches([']', ':'])
                 .trim()
                 .to_string();
             errors.push(CompileError { code, line: None, col: None, kind: IssueKind::CompileCode, message });
             pending = Some(errors.len() - 1);
-        } else if t.starts_with("error:") {
+        } else if let Some(rest) = t.strip_prefix("error:") {
             // 无 E 码错误 → EUNKNOWN（`-D warnings` 提升的 error 也走此路径）；
             // 排除 "error: aborting due to N previous errors" 汇总行
             if !t.contains("aborting due to") {
-                let message = t["error:".len()..].trim().to_string();
+                let message = rest.trim().to_string();
                 errors.push(CompileError {
                     code: "EUNKNOWN".to_string(),
                     line: None,
@@ -185,9 +185,9 @@ pub fn sanitize_panic(stderr: &str) -> SanitizedPanic {
                     let mut parts = loc_str.rsplitn(3, ':');
                     let col = parts.next().and_then(|c| c.parse::<u32>().ok());
                     let ln = parts.next().and_then(|l| l.parse::<u32>().ok());
-                    if ln.is_some() {
+                    if let Some(ln) = ln {
                         if loc.is_none() {
-                            loc = Some((ln.unwrap(), col.unwrap_or(0)));
+                            loc = Some((ln, col.unwrap_or(0)));
                             loc_line = Some(rest.to_string());
                         }
                         continue;
