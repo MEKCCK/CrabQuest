@@ -4,6 +4,8 @@ use thiserror::Error;
 pub enum GameError {
     #[error("TOML 解析失败 {0}: {1}")]
     TomlParse(String, String),
+    #[error("关卡数据校验失败 {0}: {1}")]
+    LevelDataInvalid(String, String),
     #[error("关卡目录不存在或为空: {0}")]
     LevelDirNotFound(String),
     #[error("关卡 ID 重复: {0}")]
