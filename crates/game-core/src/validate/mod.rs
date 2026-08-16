@@ -330,7 +330,7 @@ mod tests {
             line: Some(line),
             col: None,
             kind: IssueKind::CompileCode,
-            message: format!("msg {code}").into(),
+            message: format!("msg {code}"),
         }
     }
 
