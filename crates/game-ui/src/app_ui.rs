@@ -255,16 +255,24 @@ impl GameUi {
                 });
         }
         egui::CentralPanel::default().show(ctx, |ui| {
+            // P2-08/09：心数与连续游玩日实时读取引擎存档（复习回血后即时刷新）
+            let hearts = app.save_ref().hearts;
+            let streak = app.save_ref().streak_days;
             ui.horizontal(|ui| {
                 ui.heading(&d.level.title);
-                ui.label(format!(
-                    "L{} · {}/{} · XP {} · 连击 {}x",
+                let mut stats = format!(
+                    "L{} · {}/{} · XP {} · 连击 {}x · ❤️ {}",
                     d.level.tier.order(),
                     d.index + 1,
                     d.total,
                     d.xp,
-                    d.combo
-                ));
+                    d.combo,
+                    hearts
+                );
+                if streak > 0 {
+                    stats.push_str(&format!(" · 🔥 连续 {streak} 天"));
+                }
+                ui.label(stats);
             });
             ui.label(&d.level.description);
             if let Some((text, cur, total)) = d.visible_hint() {
@@ -310,8 +318,10 @@ impl GameUi {
                 }
             });
             ui.separator();
+            // P2-08：0 心禁提交（按钮置灰 + 复习引导）；编辑不禁止
+            let can_submit = hearts > 0;
             ui.horizontal(|ui| {
-                if ui.button("▶ 提交运行").clicked() {
+                if ui.add_enabled(can_submit, egui::Button::new("▶ 提交运行")).clicked() {
                     self.busy = Busy::Show;
                 }
                 let hint_label = match d.visible_hint() {
@@ -325,7 +335,18 @@ impl GameUi {
                     self.act(app, Input::Reset);
                     self.last_level_id = None; // 下一帧重新同步 starter_code
                 }
+                if hearts < 5 {
+                    if ui.button("📖 复习关卡说明 +1❤").clicked() {
+                        self.act(app, Input::ReviewLore);
+                    }
+                }
             });
+            if !can_submit {
+                ui.colored_label(
+                    egui::Color32::from_rgb(255, 180, 80),
+                    "❤️ 已空：复习关卡说明可回 1 心",
+                );
+            }
         });
     }
 
@@ -737,16 +758,21 @@ mod tests {
     use game_core::engine::Engine;
     use game_core::level::{parse_levels, LevelSet};
     use game_core::sandbox::DevSandbox;
+    use game_core::save::SaveData;
     use game_core::validate::mapper::ErrorMapper;
 
     fn test_app() -> GameApp {
+        test_app_with_save(SaveData::default())
+    }
+
+    fn test_app_with_save(save: SaveData) -> GameApp {
         let levels = parse_levels(
             "[[level]]\nid = \"t\"\ntitle = \"t\"\ntier = \"l0\"\ndescription = \"d\"\nstarter_code = \"fn main() { println!(1); }\"\nsource = \"x\"\n",
         )
         .unwrap();
         let engine = Engine::new(
             LevelSet { levels },
-            Default::default(),
+            save,
             ErrorMapper::default_fallback(),
             Box::new(DevSandbox::new()),
         );
@@ -777,6 +803,64 @@ mod tests {
         });
         assert!(ui.code_buf.contains("fn main"), "code_buf 未同步: {}", ui.code_buf);
         assert!(matches!(app.screen(), Screen::Level(_)));
+    }
+
+    // ===== P2-08/09：hearts / streak（headless）=====
+
+    #[test]
+    fn zero_hearts_disables_submit_and_shows_review_message() {
+        let ctx = egui::Context::default();
+        let save = SaveData { hearts: 0, streak_days: 3, ..SaveData::default() };
+        let mut app = test_app_with_save(save);
+        let mut ui = GameUi::new();
+        app.handle(Input::Enter).unwrap(); // 进入关卡
+        let out = ctx.run(egui::RawInput::default(), |ctx| {
+            ui.draw(ctx, &mut app);
+        });
+        assert!(
+            shapes_contain_text(&out.shapes, "❤️ 已空：复习关卡说明可回 1 心"),
+            "0 心应显示复习引导文案"
+        );
+        assert!(shapes_contain_text(&out.shapes, "▶ 提交运行"), "提交按钮仍在（add_enabled 置灰）");
+        assert!(shapes_contain_text(&out.shapes, "连续 3 天"), "状态栏应显示连续天数");
+        // 0 心绘制不触发提交（busy 保持 None）
+        assert_eq!(ui.busy, Busy::None);
+    }
+
+    #[test]
+    fn review_button_visible_below_full_hearts_only() {
+        // 心 < 5 → 复习按钮可见；心 > 0 不显示 0 心提示
+        let ctx = egui::Context::default();
+        let mut app = test_app_with_save(SaveData { hearts: 3, ..SaveData::default() });
+        let mut ui = GameUi::new();
+        app.handle(Input::Enter).unwrap();
+        let out = ctx.run(egui::RawInput::default(), |ctx| {
+            ui.draw(ctx, &mut app);
+        });
+        assert!(shapes_contain_text(&out.shapes, "复习关卡说明"), "心 <5 显示复习按钮");
+        assert!(!shapes_contain_text(&out.shapes, "❤️ 已空"), "心 >0 不显示 0 心提示");
+
+        // 满心（cap 5）→ 复习按钮隐藏（无可回）
+        let mut app2 = test_app_with_save(SaveData { hearts: 5, ..SaveData::default() });
+        let mut ui2 = GameUi::new();
+        app2.handle(Input::Enter).unwrap();
+        let out2 = ctx.run(egui::RawInput::default(), |ctx| {
+            ui2.draw(ctx, &mut app2);
+        });
+        assert!(!shapes_contain_text(&out2.shapes, "复习关卡说明"), "满心隐藏复习按钮");
+    }
+
+    #[test]
+    fn streak_hidden_when_zero_days() {
+        let ctx = egui::Context::default();
+        let mut app = test_app_with_save(SaveData { hearts: 3, streak_days: 0, ..SaveData::default() });
+        let mut ui = GameUi::new();
+        app.handle(Input::Enter).unwrap();
+        let out = ctx.run(egui::RawInput::default(), |ctx| {
+            ui.draw(ctx, &mut app);
+        });
+        assert!(!shapes_contain_text(&out.shapes, "连续 0 天"), "未活跃不显示连续天数");
+        assert!(shapes_contain_text(&out.shapes, "❤️ 3"), "头部应显示心数");
     }
 
     #[test]

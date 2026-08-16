@@ -85,11 +85,14 @@ pub struct SaveData {
     /// 上次活跃日 "yyyy-mm-dd"
     #[serde(default)]
     pub last_played_date: Option<String>,
-    /// XP-once 去重集合，格式 "{level_id}:pass"
+    /// XP-once 去重集合，格式 "{level_id}:pass"（另含复习标记 "{level_id}:lore"）
     #[serde(default)]
     pub completed_steps: HashSet<String>,
     #[serde(default)]
     pub achievements: HashSet<String>,
+    /// 累计见过的不同错误码（P2-10 成就 error_collector 依据：≥10 种解锁）
+    #[serde(default)]
+    pub seen_error_codes: HashSet<String>,
     #[serde(default)]
     pub practice_unlock_all: bool,
     #[serde(default)]
@@ -114,6 +117,7 @@ impl Default for SaveData {
             last_played_date: None,
             completed_steps: HashSet::new(),
             achievements: HashSet::new(),
+            seen_error_codes: HashSet::new(),
             practice_unlock_all: false,
             victory_celebrated: false,
             level_states: HashMap::new(),
@@ -322,6 +326,7 @@ attempts = 0
             last_played_date: Some("2026-08-16".into()),
             completed_steps: ["l0-hello:pass"].into_iter().map(String::from).collect(),
             achievements: ["first_steps"].into_iter().map(String::from).collect(),
+            seen_error_codes: ["E0308", "E0425", "E0382"].into_iter().map(String::from).collect(),
             practice_unlock_all: true,
             victory_celebrated: true,
             ..SaveData::default()

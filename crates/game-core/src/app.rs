@@ -13,6 +13,8 @@ pub enum Input {
     Submit,
     Hint,
     Reset,
+    /// P2-08：复习关卡说明回血（engine.review_lore）
+    ReviewLore,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -291,6 +293,18 @@ impl GameApp {
                     }
                     self.last_level = Some(cur.clone());
                 }
+                // P2-09：查看 hint 计为活跃行为（同日幂等）
+                self.engine.touch_activity();
+            }
+            Input::ReviewLore => {
+                if let Screen::Level(cur) = &mut self.screen {
+                    // 复习回血（引擎层幂等：每关每局一次）；成功后刷新反馈面板心数
+                    self.engine.review_lore(&cur.level.id);
+                    if let Some(fb) = &mut cur.feedback {
+                        fb.hearts = self.engine.save.hearts;
+                    }
+                    self.last_level = Some(cur.clone());
+                }
             }
             Input::Reset => {
                 if let Screen::Level(cur) = &mut self.screen {
@@ -412,7 +426,7 @@ source = "rustlings"
                 // 首通 + 完美（首次提交即通过）→ 25 + 10（engine award_xp 实算值）
                 assert_eq!(f.xp_gained, crate::engine::XP_PASS + crate::engine::XP_PERFECT);
                 assert_eq!(f.combo, 1, "通过后连击应为 1");
-                assert_eq!(f.hearts, 3, "初始心数 3");
+                assert_eq!(f.hearts, 4, "初始 3 心 + 通关回血 1 → 4");
                 assert_eq!(f.unlocked_next.as_deref(), Some("move"), "应解锁下一关标题");
                 assert!(f.errors.is_empty() && f.expectation.is_none() && f.panic.is_none());
             }
@@ -502,6 +516,62 @@ source = "rustlings"
         a.handle(Input::Hint).unwrap();
         match a.screen() {
             Screen::Level(d) => assert!(d.show_hint),
+            other => panic!("expected Level, got {:?}", other),
+        }
+    }
+
+    // ===== P2-08/09/10：hearts / streak / achievements（app 层接线）=====
+
+    #[test]
+    fn review_lore_from_level_heals_once() {
+        let mut a = app();
+        a.handle(Input::Enter).unwrap(); // 进入第一关
+        // 失败一次 → 3 → 2
+        a.set_code("fn main() { println!(\"wrong\"); }".into());
+        a.handle(Input::Submit).unwrap();
+        assert_eq!(a.engine.save.hearts, 2);
+        a.handle(Input::Enter).unwrap(); // 回编辑（带反馈面板）
+        assert_eq!(a.engine.save.hearts, 2);
+        // 复习回血 → 3，且反馈面板心数同步刷新
+        a.handle(Input::ReviewLore).unwrap();
+        assert_eq!(a.engine.save.hearts, 3);
+        match a.screen() {
+            Screen::Level(d) => {
+                assert!(d.feedback.is_some(), "返回编辑后反馈面板保留");
+                assert_eq!(d.feedback.as_ref().unwrap().hearts, 3, "面板心数应刷新");
+            }
+            other => panic!("expected Level, got {:?}", other),
+        }
+        // 幂等：再次复习不回血
+        a.handle(Input::ReviewLore).unwrap();
+        assert_eq!(a.engine.save.hearts, 3);
+        assert!(a.engine.save.completed_steps.contains("l0-hello:lore"));
+    }
+
+    #[test]
+    fn hint_press_counts_as_activity() {
+        let mut a = app();
+        assert_eq!(a.engine.save.streak_days, 0);
+        a.handle(Input::Enter).unwrap(); // 进入关卡
+        a.handle(Input::Hint).unwrap();
+        assert_eq!(a.engine.save.streak_days, 1, "查看 hint 计为活跃");
+        assert!(a.engine.save.last_played_date.is_some());
+        // 同日再次 hint → 幂等
+        a.handle(Input::Hint).unwrap();
+        assert_eq!(a.engine.save.streak_days, 1);
+    }
+
+    #[test]
+    fn submit_blocked_at_zero_hearts() {
+        let mut a = app();
+        a.handle(Input::Enter).unwrap();
+        a.engine.save.hearts = 0;
+        let result = a.handle(Input::Submit);
+        assert!(matches!(result, Err(GameError::NoHearts)));
+        // 编辑仍可用（0 心不禁编辑）
+        a.set_code("fn main() { println!(\"edited\"); }".into());
+        match a.screen() {
+            Screen::Level(d) => assert_eq!(d.code, "fn main() { println!(\"edited\"); }"),
             other => panic!("expected Level, got {:?}", other),
         }
     }
