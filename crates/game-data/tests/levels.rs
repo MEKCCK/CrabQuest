@@ -250,3 +250,24 @@ fn quiz_level_49_parses() {
     assert!(l.expect_output.is_empty(), "quiz 关不应有 expect_output");
     assert!(!l.allow_compile_fail, "quiz 关不应为 allow_compile_fail");
 }
+
+/// T7（P4-25）L4 Boss 关 53-l4-boss（自编购物车：借用+所有权+Option 综合）解析断言
+#[test]
+fn t7_l4_boss_level_53_consistent() {
+    let set = game_core::LevelSet::load(&game_data::levels_dir()).expect("关卡目录加载失败");
+    let l = set.get("l4-boss").expect("缺少 53-l4-boss 关");
+    assert_eq!(l.tier, game_core::LevelTier::L4);
+    assert!(l.is_boss, "l4-boss 应为 Boss 关");
+    assert!(!l.starter_code.trim().is_empty(), "starter_code 不能为空");
+    assert!(!l.source.is_empty(), "source 不能为空");
+    assert_eq!(l.hints.len(), 3, "应有 3 级 hints");
+    assert!(
+        l.hint_unlock.is_empty() || l.hint_unlock.len() == l.hints.len(),
+        "hint_unlock 长度必须与 hints 一致"
+    );
+    assert_eq!(l.expect_output, "总数量：4\n药水数量：3", "Boss 两行中文输出");
+    assert!(!l.allow_compile_fail, "code 型 Boss 不应为 allow_compile_fail");
+    assert!(l.source.starts_with("自编"), "source 应标自编");
+    // 修复点唯一性：starter 里只允许出现一处 &self 方法签名（add），fixed 版由 rustc 实测 E0596
+    assert!(l.starter_code.contains("fn add(&self"), "starter 应保留 add(&self) bug");
+}
