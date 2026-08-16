@@ -9,7 +9,7 @@ use crate::validate::mapper::ErrorMapper;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Validation {
-    Pass,
+    Pass { xp_gained: u32 },
     Fail { feedback: Vec<String> },
 }
 
@@ -59,7 +59,7 @@ pub fn validate(
                 // 判定只取首条 E 码（rustc 输出顺序，不按行号重排）
                 let got = errors.first().map(|e| e.code.clone()).unwrap_or_default();
                 if !level.expect_error_code.is_empty() && got == level.expect_error_code {
-                    return Ok(Validation::Pass);
+                    return Ok(Validation::Pass { xp_gained: 0 });
                 }
                 let shown = if got.is_empty() { "无错误".to_string() } else { got };
                 let extra = if errors.len() > 1 {
@@ -115,7 +115,7 @@ pub fn validate(
                     let expect = normalize_output(&level.expect_output, level.trim_lines);
                     let got = normalize_output(&stdout, level.trim_lines);
                     if expect.is_empty() || got == expect {
-                        Ok(Validation::Pass)
+                        Ok(Validation::Pass { xp_gained: 0 })
                     } else {
                         Ok(Validation::Fail {
                             feedback: vec![format!(
@@ -181,14 +181,14 @@ mod tests {
     fn pass_when_output_matches() {
         let lv = level("t1", "hello 42", false, "");
         let code = "fn main() { println!(\"hello {}\", 42); }";
-        assert_eq!(validate(&lv, code, &ErrorMapper::default_fallback(), &sb()).unwrap(), Validation::Pass);
+        assert_eq!(validate(&lv, code, &ErrorMapper::default_fallback(), &sb()).unwrap(), Validation::Pass { xp_gained: 0 });
     }
 
     #[test]
     fn pass_when_no_output_required() {
         let lv = level("t2", "", false, "");
         let code = "fn main() { println!(\"anything\"); }";
-        assert_eq!(validate(&lv, code, &ErrorMapper::default_fallback(), &sb()).unwrap(), Validation::Pass);
+        assert_eq!(validate(&lv, code, &ErrorMapper::default_fallback(), &sb()).unwrap(), Validation::Pass { xp_gained: 0 });
     }
 
     #[test]
@@ -221,7 +221,7 @@ mod tests {
     fn allow_compile_fail_matches_code() {
         let lv = level("t5", "", true, "E0382");
         let code = "fn main() { let s = String::from(\"hi\"); let t = s; println!(\"{}\", s); }";
-        assert_eq!(validate(&lv, code, &ErrorMapper::default_fallback(), &sb()).unwrap(), Validation::Pass);
+        assert_eq!(validate(&lv, code, &ErrorMapper::default_fallback(), &sb()).unwrap(), Validation::Pass { xp_gained: 0 });
     }
 
     #[test]
@@ -251,7 +251,7 @@ mod tests {
         // expect 含 \r\n 时先归一化为 \n 再 trim，与运行输出逐字节相等
         let lv = level("t9", "a\r\nb\r\n", false, "");
         let code = "fn main() { println!(\"a\"); println!(\"b\"); }";
-        assert_eq!(validate(&lv, code, &ErrorMapper::default_fallback(), &sb()).unwrap(), Validation::Pass);
+        assert_eq!(validate(&lv, code, &ErrorMapper::default_fallback(), &sb()).unwrap(), Validation::Pass { xp_gained: 0 });
     }
 
     #[test]
@@ -272,7 +272,7 @@ mod tests {
         let mut lv = level("t11", "a \nb", false, "");
         lv.trim_lines = true;
         let code = "fn main() { println!(\"a\"); println!(\"b\"); }";
-        assert_eq!(validate(&lv, code, &ErrorMapper::default_fallback(), &sb()).unwrap(), Validation::Pass);
+        assert_eq!(validate(&lv, code, &ErrorMapper::default_fallback(), &sb()).unwrap(), Validation::Pass { xp_gained: 0 });
     }
 
     #[test]
@@ -280,7 +280,7 @@ mod tests {
         // 内部空行参与比对：输出中的空行必须在 expect 中出现
         let lv = level("t12", "a\n\nb", false, "");
         let code = "fn main() { println!(\"a\"); println!(); println!(\"b\"); }";
-        assert_eq!(validate(&lv, code, &ErrorMapper::default_fallback(), &sb()).unwrap(), Validation::Pass);
+        assert_eq!(validate(&lv, code, &ErrorMapper::default_fallback(), &sb()).unwrap(), Validation::Pass { xp_gained: 0 });
     }
 
     #[test]
@@ -437,7 +437,7 @@ mod tests {
         let sb = failed(vec![err("E0382", 4), err("E0596", 8)]);
         assert_eq!(
             validate(&lv, "x", &ErrorMapper::default_fallback(), &sb).unwrap(),
-            Validation::Pass
+            Validation::Pass { xp_gained: 0 }
         );
         let lv2 = level("t14", "", true, "E0502");
         let sb2 = failed(vec![err("E0382", 4), err("E0596", 8)]);

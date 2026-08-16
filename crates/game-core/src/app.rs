@@ -1,4 +1,4 @@
-use crate::engine::{Engine, XP_PER_PASS};
+use crate::engine::Engine;
 use crate::error::GameError;
 use crate::level::Level;
 use crate::save::{LevelState, SaveData};
@@ -226,12 +226,12 @@ impl GameApp {
             Input::Submit => {
                 let result = self.engine.submit(&d.code)?;
                 match result {
-                    Validation::Pass => {
+                    Validation::Pass { xp_gained } => {
                         self.screen = Screen::Feedback(FeedbackData {
                             passed: true,
                             level_id: d.level.id.clone(),
                             feedback: Vec::new(),
-                            xp_gained: XP_PER_PASS,
+                            xp_gained,
                         });
                     }
                     Validation::Fail { feedback } => {
@@ -378,7 +378,8 @@ source = "rustlings"
         match a.screen() {
             Screen::Feedback(f) => {
                 assert!(f.passed);
-                assert_eq!(f.xp_gained, XP_PER_PASS);
+                // 首通 + 完美（首次提交即通过）→ 25 + 10（engine award_xp 实算值）
+                assert_eq!(f.xp_gained, crate::engine::XP_PASS + crate::engine::XP_PERFECT);
             }
             other => panic!("expected Feedback, got {:?}", other),
         }
