@@ -1,9 +1,16 @@
 # errors.toml schema v2（v3 §5.1-5.2）
-# 规则：zh/link 必填（zh ≤60 字）；link_zh/severity/fix/example/concept 可选（Rust 侧 #[serde(default)]）。
+# 规则：zh/link 必填（zh ≤60 字，人话首段 ≤30 字）；link_zh/severity/fix/example/concept 可选（Rust 侧 #[serde(default)]）。
 # severity：P0（主线必踩，UI 常驻）| P1（扩展路线，默认）| P2（低优先）。
 # link_zh 仅允许 rustwiki.org 白名单（course.rs 与 doc.rust-lang.org/zh-CN/book 已实测 404，禁用）。
 # concept 取值：name|ownership|borrow|lifetime|type|trait|macro|module|match|variable|function|panic。
 # 全部新增码已用 rustc 1.97.0 --edition 2021 最小复现实测可发射；官方页与 rustwiki 页 curl 实测 200。
+# T8（P2-15 错误码卡片库）：8 张高频卡（E0382/E0502/E0499/E0596/E0106/E0308/E0277/E0507）
+# 按 L3-D2-pedagogy §2 精修为「人话：为什么」两段式（人话 ≤30 / 整段 ≤60 / fix ≤40）；
+# 卡片 example 即 L3-D2-cards 复现（全部 rustc 1.97.0 --edition 2021 实测发射对应码，命令：
+#   rustc --edition 2021 --crate-type bin -o /dev/null E0xxx.rs
+#   实测：E0382→E0382, E0502→E0502, E0499→E0499, E0596→E0596, E0106→E0106,
+#         E0308→E0308, E0277→E0277, E0507→E0507, E0425→E0425, E0599→E0599,
+#         E0597→E0597, E0282→E0282, E0384→E0384, E0594→E0594, E0621→E0621, E0601→E0601）。
 
 # ---- A. 现有关卡触发 6 码（P0，schema v2 补全） ----
 [E0425]
@@ -13,35 +20,56 @@ link_zh = "https://rustwiki.org/zh-CN/book/ch07-03-paths-for-referring-to-an-ite
 severity = "P0"
 concept = "name"
 fix = "检查拼写与作用域；确认已声明（let/fn/use）"
+example = '''
+fn main() {
+    println!("{}", missing_name);
+}
+'''
 
 [E0596]
-zh = "无法以可变方式借用：变量或参数需声明为 mut 才能被修改"
+zh = "变量没声明 mut，不能借出可变引用：&mut 代表写权限，只有 let mut 变量才允许被写入"
 link = "https://doc.rust-lang.org/error_codes/E0596.html"
 link_zh = "https://rustwiki.org/zh-CN/book/ch04-02-references-and-borrowing.html"
 severity = "P0"
 concept = "borrow"
-fix = "给变量/参数加 mut：fn f(mut v: Vec<i32>)"
+fix = "把变量改为 let mut s；函数参数需同时加 mut 与 &mut"
+example = '''
+fn main() {
+    let s = String::from("hi");
+    let r = &mut s;
+    r.push_str("!");
+    println!("{}", r);
+}
+'''
 
 [E0382]
-zh = "使用了已移动的值：所有权已转移给别的变量/函数，原变量不能再使用"
+zh = "所有权已转给别人，原变量不能再用了：String 不是 Copy 类型，s2 = s1 会移动所有权，s1 从此失效"
 link = "https://doc.rust-lang.org/error_codes/E0382.html"
 link_zh = "https://rustwiki.org/zh-CN/book/ch04-01-what-is-ownership.html"
 severity = "P0"
 concept = "ownership"
-fix = "改用引用 &s（只借用）或 s.clone()，或调整使用顺序"
+fix = "s1.clone() 复制一份，或 &s1 只借用，让 s1 继续可用"
 example = '''
-let s1 = String::from("hi");
-let s2 = &s1;            // 借用：s1 仍可用
-println!("{} {}", s1, s2);
+fn main() {
+    let s1 = String::from("hello");
+    let s2 = s1;
+    println!("{}", s1);
+}
 '''
 
 [E0106]
-zh = "缺少生命周期标注：引用类型需要显式标注生命周期（如 <'a>）"
+zh = "函数返回的引用没说清活多久，需加生命周期标注：返回值可能来自 x 或 y，编译器无法确定返回引用的有效范围"
 link = "https://doc.rust-lang.org/error_codes/E0106.html"
 link_zh = "https://rustwiki.org/zh-CN/book/ch10-03-lifetime-syntax.html"
 severity = "P0"
 concept = "lifetime"
 fix = "补生命周期参数：fn f<'a>(x: &'a str) -> &'a str"
+example = '''
+fn longest(x: &str, y: &str) -> &str {
+    if x.len() > y.len() { x } else { y }
+}
+fn main() {}
+'''
 
 [E0599]
 zh = "没有该方法：类型上不存在这个方法的实现（或未实现对应 trait）"
@@ -50,6 +78,13 @@ link_zh = "https://rustwiki.org/zh-CN/book/ch10-02-traits.html"
 severity = "P0"
 concept = "trait"
 fix = "实现该 trait/方法，或 use 引入 trait 后调用"
+example = '''
+struct Point { x: i32 }
+fn main() {
+    let p = Point { x: 1 };
+    p.fly();
+}
+'''
 
 [E0597]
 zh = "借用活得不够久：被引用的值比引用先被释放（生命周期问题）"
@@ -58,6 +93,13 @@ link_zh = "https://rustwiki.org/zh-CN/book/ch10-03-lifetime-syntax.html"
 severity = "P0"
 concept = "lifetime"
 fix = "调整作用域，让被借用值活得比引用更久"
+example = '''
+fn main() {
+    let r;
+    { let x = 5; r = &x; }
+    r;
+}
+'''
 
 # ---- B. 新增 P0 5 码（教学主线，rustc 1.97 实测发射） ----
 [E0282]
@@ -68,8 +110,10 @@ severity = "P0"
 concept = "type"
 fix = "写类型注解：let v: Vec<i32> = Vec::new();"
 example = '''
-let v: Vec<i32> = Vec::new();   // 补类型注解
-println!("{:?}", v);
+fn main() {
+    let v = Vec::new();
+    println!("{:?}", v);
+}
 '''
 
 [E0384]
@@ -80,8 +124,10 @@ severity = "P0"
 concept = "variable"
 fix = "let mut x = 5; 或改用新变量 let x = 6;"
 example = '''
-let mut x = 5;   // 加 mut 后可重新赋值
-x = 6;
+fn main() {
+    let x = 5;
+    x = 6;
+}
 '''
 
 [E0594]
@@ -92,7 +138,11 @@ severity = "P0"
 concept = "borrow"
 fix = "改用 &mut 可变借用，或先取得所有权再改"
 example = '''
-fn f(x: &i32) { *x = 5; }   // 改为 &mut i32
+fn main() {
+    let mut x = 5;
+    let r = &x;
+    *r = 6;
+}
 '''
 
 [E0621]
@@ -103,9 +153,10 @@ severity = "P0"
 concept = "lifetime"
 fix = "给返回相关的参数统一标注：y: &'a i32"
 example = '''
-fn foo<'a>(x: &'a i32, y: &'a i32) -> &'a i32 {
+fn foo<'a>(x: &'a i32, y: &i32) -> &'a i32 {
     if x > y { x } else { y }
 }
+fn main() {}
 '''
 
 [E0601]
@@ -116,9 +167,7 @@ severity = "P0"
 concept = "function"
 fix = "补上 fn main() { ... } 入口函数"
 example = '''
-fn main() {   // 补上入口函数
-    println!("hello");
-}
+fn not_main() {}
 '''
 
 # ---- C. P1（borrow 家族补全） ----
@@ -255,20 +304,36 @@ concept = "trait"
 fix = "移除 #[derive(Copy)]，改用 Clone"
 
 [E0277]
-zh = "trait 约束未满足：某个类型没有实现所需的 trait（如 Display、Clone）"
+zh = "类型缺了 trait（一组能力），不满足约束：println! {} 需要 Display，Vec<i32> 没有"
 link = "https://doc.rust-lang.org/error_codes/E0277.html"
 link_zh = "https://rustwiki.org/zh-CN/book/ch10-02-traits.html"
 severity = "P1"
 concept = "trait"
-fix = "为类型实现该 trait，或改用已实现的类型"
+fix = "改用 {:?}（T: Debug），或传实现了 Display 的类型"
+example = '''
+fn print_it<T: std::fmt::Display>(x: T) {
+    println!("{}", x);
+}
+fn main() {
+    let v = vec![1, 2, 3];
+    print_it(v);
+}
+'''
 
 [E0308]
-zh = "类型不匹配：表达式的实际类型与期望类型不一致"
+zh = "表达式的实际类型和期望类型对不上：Rust 不做隐式类型转换，u32 不能直接当作 String，类型必须精确匹配"
 link = "https://doc.rust-lang.org/error_codes/E0308.html"
 link_zh = "https://rustwiki.org/zh-CN/book/ch03-02-data-types.html"
 severity = "P1"
 concept = "type"
-fix = "统一两边类型：显式转换 as 或调整声明类型"
+fix = "显式转换（n.to_string()），或修改类型标注使两边一致"
+example = '''
+fn main() {
+    let n: u32 = 5;
+    let s: String = n;
+    println!("{}", s);
+}
+'''
 
 [E0369]
 zh = "二元运算（如 +、-）不能用于这两个类型：需要实现对应运算符的 trait"
@@ -287,20 +352,36 @@ concept = "module"
 fix = "检查路径拼写，确认模块/crate 存在并已声明"
 
 [E0499]
-zh = "同一作用域内多次可变借用：一个变量同时只能有一个可变借用"
+zh = "可变借用同时只能有一个，不能开两条写通道：两个 &mut 并存意味着两个写入者，可能互相覆盖，Rust 不允许"
 link = "https://doc.rust-lang.org/error_codes/E0499.html"
 link_zh = "https://rustwiki.org/zh-CN/book/ch04-02-references-and-borrowing.html"
 severity = "P1"
 concept = "borrow"
-fix = "错开可变借用，或改用不可变借用/内部可变性"
+fix = "用 {} 让第一个可变借用先结束再开第二个，或先各自用完"
+example = '''
+fn main() {
+    let mut s = String::from("hi");
+    let r1 = &mut s;
+    let r2 = &mut s;
+    println!("{} {}", r1, r2);
+}
+'''
 
 [E0502]
-zh = "借用冲突：变量同时存在不可变借用与可变借用，Rust 不允许"
+zh = "同一时刻，值不能既被读（不可变借用）又被写（可变借用）：读写并存可能造成数据竞争，Rust 禁止"
 link = "https://doc.rust-lang.org/error_codes/E0502.html"
 link_zh = "https://rustwiki.org/zh-CN/book/ch04-02-references-and-borrowing.html"
 severity = "P1"
 concept = "borrow"
-fix = "调整借用顺序，避免同时持有冲突的借用"
+fix = "先结束读借用再开写借用（如用 {} 包住），或调整顺序"
+example = '''
+fn main() {
+    let mut s = String::from("hi");
+    let r1 = &s;
+    let r2 = &mut s;
+    println!("{} {}", r1, r2);
+}
+'''
 
 [E0505]
 zh = "值被借用时不能移动：有活跃借用的情况下尝试 move 所有权"
@@ -311,12 +392,19 @@ concept = "borrow"
 fix = "先结束借用再 move，或改用引用传递"
 
 [E0507]
-zh = "不能移出借用的内容：无法从借用中 move 走所有权"
+zh = "值正被只读借用，不能把内容整个搬走：p 是 &Point 只读借用，移出 p.name 会留下悬空状态，只能借不能搬"
 link = "https://doc.rust-lang.org/error_codes/E0507.html"
-link_zh = "https://rustwiki.org/zh-CN/book/ch04-02-references-and-borrowing.html"
+link_zh = "https://rustwiki.org/zh-CN/book/ch04-01-what-is-ownership.html"
 severity = "P1"
 concept = "borrow"
-fix = "改用 clone，或调整所有权设计"
+fix = "返回字段引用 &String，或用 clone() 复制一份再返回"
+example = '''
+struct Point { name: String }
+fn get_name(p: &Point) -> String {
+    p.name
+}
+fn main() {}
+'''
 
 [E0618]
 zh = "把不可调用的值当函数调用：该值不是函数"
