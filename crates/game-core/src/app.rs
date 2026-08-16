@@ -44,10 +44,30 @@ pub struct LevelData {
     pub level: Level,
     pub code: String,
     pub show_hint: bool,
+    /// 多级提示当前展示到第几条（0-based；hints 为空时恒为 0）
+    pub hint_step: usize,
     pub xp: u32,
     pub combo: u32,
     pub total: usize,
     pub index: usize,
+}
+
+impl LevelData {
+    /// 当前应显示的提示：hints 数组优先，为空回退单条 hint 字段。
+    /// 返回 (文本, 当前第几条, 总条数)；未显示或两者皆空时返回 None。
+    pub fn visible_hint(&self) -> Option<(&str, usize, usize)> {
+        if !self.show_hint {
+            return None;
+        }
+        if !self.level.hints.is_empty() {
+            let idx = self.hint_step.min(self.level.hints.len() - 1);
+            Some((&self.level.hints[idx], idx + 1, self.level.hints.len()))
+        } else if !self.level.hint.is_empty() {
+            Some((&self.level.hint, 1, 1))
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -112,6 +132,7 @@ impl GameApp {
         let d = LevelData {
             code: level.starter_code.clone(),
             show_hint: false,
+            hint_step: 0,
             xp: self.engine.save.xp,
             combo: self.engine.save.combo,
             total: self.engine.level_set.len(),
@@ -225,7 +246,21 @@ impl GameApp {
             }
             Input::Hint => {
                 if let Screen::Level(cur) = &mut self.screen {
-                    cur.show_hint = !cur.show_hint;
+                    if cur.level.hints.is_empty() {
+                        // 无多级提示：保持原有开关行为
+                        cur.show_hint = !cur.show_hint;
+                    } else if !cur.show_hint {
+                        // 首次按下：显示第一条
+                        cur.show_hint = true;
+                        cur.hint_step = 0;
+                    } else if cur.hint_step + 1 < cur.level.hints.len() {
+                        // 逐级揭示下一条
+                        cur.hint_step += 1;
+                    } else {
+                        // 最后一条后再按：关闭提示
+                        cur.show_hint = false;
+                        cur.hint_step = 0;
+                    }
                     self.last_level = Some(cur.clone());
                 }
             }
@@ -401,6 +436,89 @@ source = "rustlings"
             Screen::Level(d) => assert!(d.show_hint),
             other => panic!("expected Level, got {:?}", other),
         }
+    }
+
+    const LEVELS_HINTS: &str = r#"
+[[level]]
+id = "h-multi"
+title = "multi-hint"
+tier = "l1"
+description = "d"
+hint = "兜底提示"
+hints = ["第一级提示", "第二级提示", "第三级提示"]
+starter_code = "fn main() { println!(\"x has the value {}\", 5); }"
+expect_output = "x has the value 5"
+source = "rustlings"
+"#;
+
+    fn hint_app() -> GameApp {
+        let set = LevelSet { levels: parse_levels(LEVELS_HINTS).unwrap() };
+        let engine = Engine::new(set, Default::default(), ErrorMapper::default_fallback(), Box::new(DevSandbox::new()));
+        GameApp::new(engine)
+    }
+
+    fn level_screen(a: &GameApp) -> LevelData {
+        match a.screen() {
+            Screen::Level(d) => d.clone(),
+            other => panic!("expected Level, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn hint_steps_through_levels_then_closes() {
+        let mut a = hint_app();
+        a.handle(Input::Enter).unwrap(); // 进入关卡
+
+        // 初始：未显示
+        let d = level_screen(&a);
+        assert!(!d.show_hint);
+        assert_eq!(d.visible_hint(), None);
+
+        // 首次按下 → 第一条
+        a.handle(Input::Hint).unwrap();
+        let d = level_screen(&a);
+        assert_eq!(d.visible_hint(), Some(("第一级提示", 1, 3)));
+
+        // 逐级揭示
+        a.handle(Input::Hint).unwrap();
+        assert_eq!(level_screen(&a).visible_hint(), Some(("第二级提示", 2, 3)));
+        a.handle(Input::Hint).unwrap();
+        assert_eq!(level_screen(&a).visible_hint(), Some(("第三级提示", 3, 3)));
+
+        // 最后一条再按 → 关闭
+        a.handle(Input::Hint).unwrap();
+        let d = level_screen(&a);
+        assert!(!d.show_hint);
+        assert_eq!(d.visible_hint(), None);
+    }
+
+    const LEVELS_SINGLE_HINT: &str = r#"
+[[level]]
+id = "s-single"
+title = "single-hint"
+tier = "l1"
+description = "d"
+hint = "唯一提示"
+starter_code = "fn main() { println!(\"x has the value {}\", 5); }"
+expect_output = "x has the value 5"
+source = "rustlings"
+"#;
+
+    fn single_hint_app() -> GameApp {
+        let set = LevelSet { levels: parse_levels(LEVELS_SINGLE_HINT).unwrap() };
+        let engine = Engine::new(set, Default::default(), ErrorMapper::default_fallback(), Box::new(DevSandbox::new()));
+        GameApp::new(engine)
+    }
+
+    #[test]
+    fn hint_without_hints_toggles_single_hint() {
+        let mut a = single_hint_app(); // 只有 hint 字段、无 hints 数组
+        a.handle(Input::Enter).unwrap();
+        assert_eq!(level_screen(&a).visible_hint(), None);
+        a.handle(Input::Hint).unwrap();
+        assert_eq!(level_screen(&a).visible_hint(), Some(("唯一提示", 1, 1)));
+        a.handle(Input::Hint).unwrap();
+        assert_eq!(level_screen(&a).visible_hint(), None);
     }
 
     #[test]

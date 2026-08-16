@@ -4,6 +4,11 @@ title = "所有权与可变参数"
 tier = "l1"
 description = "fill_vec 接收 Vec 后要 push 元素，但参数不是 mut。修复编译错误。"
 hint = "函数参数需要 mut：fn fill_vec(mut vec: Vec<i32>)"
+hints = [
+  "fill_vec 内部对 vec 调用了 push，push 需要可变引用。",
+  "编译错误 E0596 指向 fill_vec 的签名，参数缺少 mut 修饰。",
+  "签名改为 fn fill_vec(mut vec: Vec<i32>) -> Vec<i32>",
+]
 starter_code = '''
 fn main() {
     let vec0 = Vec::new();
