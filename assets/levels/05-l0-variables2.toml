@@ -1,0 +1,25 @@
+[[level]]
+id = "l0-variables2"
+title = "类型推断：x 是什么类型？"
+tier = "l0"
+description = "变量 x 只声明而未赋值，Rust 无法推断类型，编译失败。让 x 等于 10，目标输出 x is ten!。涉及概念：类型推断。"
+hint = "Rust 从初始值推断变量类型，只声明不赋值则类型未知。"
+hints = [
+  "Rust 从初始值推断变量类型，只声明不赋值则类型未知。",
+  "E0283 类型推断失败：let x; 未给值导致类型未知。见 book-cn ch03-02「数据类型」：https://rustwiki.org/zh-CN/book/ch03-02-data-types.html",
+  "let x = 10;\n给变量赋一个初始值即可。",
+]
+starter_code = '''
+fn main() {
+    // TODO: 修改下面这行代码来修复编译错误。
+    let x;
+
+    if x == 10 {
+        println!("x is ten!");
+    } else {
+        println!("x is not ten!");
+    }
+}
+'''
+expect_output = "x is ten!"
+source = "rustlings (exercises/01_variables/variables2.rs, v6.5.0, MIT，注释中文化)"

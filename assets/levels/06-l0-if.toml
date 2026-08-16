@@ -1,0 +1,24 @@
+[[level]]
+id = "l0-if"
+title = "if 表达式：返回较大的数"
+tier = "l0"
+description = "bigger 声明返回 i32，函数体却没有返回值，类型不匹配，无法编译。目标输出两行：10 与 42。涉及概念：if 表达式。"
+hint = "函数声明了返回类型，函数体就必须返回该类型的值。"
+hints = [
+  "函数声明了返回类型，函数体就必须返回该类型的值。",
+  "E0308 类型不匹配：bigger 函数体为空，返回了 ()。见 book-cn ch03-05「控制流」：https://rustwiki.org/zh-CN/book/ch03-05-control-flow.html",
+  "if a > b { a } else { b }\nif 表达式两个分支都返回 i32。",
+]
+starter_code = '''
+fn bigger(a: i32, b: i32) -> i32 {
+    // TODO: 补全函数体，返回更大的数。
+    // 两数相等时返回任意一个即可。
+}
+
+fn main() {
+    println!("{}", bigger(10, 8));
+    println!("{}", bigger(32, 42));
+}
+'''
+expect_output = "10\n42"
+source = "rustlings (exercises/03_if/if1.rs, v6.5.0, MIT，R1 改写：测试搬 main)"
