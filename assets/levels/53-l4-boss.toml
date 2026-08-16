@@ -1,0 +1,50 @@
+[[level]]
+id = "l4-boss"
+title = "Boss：勇者的背包"
+tier = "l4"
+description = "综合 Boss：Inventory 用 Vec 存物品，add 添加、total 求和、find 查找；但 add 用不可变引用，无法修改背包而编译失败。目标输出：总数量：4、药水数量：3。涉及结构体、可变借用、迭代器 sum、Option、match。"
+hint = "add 需要修改 self，参数必须是 &mut self。"
+hints = [
+  "借来的数据只能读不能改；方法想修改自身数据，就必须先持有可变借用。",
+  "错误 E0596：add 内 self.items.push 修改了只读借用数据。方法要改自身数据需可变接收者 &mut self，见 book-cn ch05-03：https://rustwiki.org/zh-CN/book/ch05-03-method-syntax.html",
+  "把签名改成：\nfn add(&mut self, name: &str, qty: u32)\n其余代码不动。",
+]
+hint_unlock = [1, 2, 3]
+starter_code = '''
+struct Inventory {
+    items: Vec<(String, u32)>,
+}
+
+impl Inventory {
+    fn new() -> Inventory {
+        Inventory { items: Vec::new() }
+    }
+
+    fn add(&self, name: &str, qty: u32) {
+        self.items.push((name.to_string(), qty));
+    }
+
+    fn total(&self) -> u32 {
+        self.items.iter().map(|(_, qty)| qty).sum()
+    }
+
+    fn find(&self, name: &str) -> Option<u32> {
+        self.items.iter().find(|(n, _)| n == name).map(|(_, qty)| *qty)
+    }
+}
+
+fn main() {
+    let mut inv = Inventory::new();
+    inv.add("剑", 1);
+    inv.add("药水", 3);
+    println!("总数量：{}", inv.total());
+    match inv.find("药水") {
+        Some(qty) => println!("药水数量：{}", qty),
+        None => println!("没有药水"),
+    }
+}
+'''
+expect_output = '''总数量：4
+药水数量：3'''
+is_boss = true
+source = "自编（综合借用+所有权+Option 知识点；参考 100-exercises-to-learn-rust 的 ticket 项目结构，CC BY-NC 4.0 仅借鉴思路，代码与文案自写）"
