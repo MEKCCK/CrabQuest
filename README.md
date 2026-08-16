@@ -42,7 +42,10 @@ cargo run -p game-ui
 - 挑战关卡主题参考 rust-quiz：https://github.com/dtolnay/rust-quiz
 - 提示参考 The Book 与 course.rs，均已改写精简
 - 每个关卡 TOML 的 `source` 字段标注具体出处
-- UI 字体：JetBrains Maple Mono（SIL OFL，内嵌于 `crates/game-ui/assets/`），覆盖 CJK 中文字形
+- UI 字体：JetBrains Maple Mono —— JetBrains Mono（OFL 1.1）与 Maple Mono（OFL 1.1）合并版，
+  内嵌于 `crates/game-ui/assets/JetBrainsMapleMono-Regular.ttf`，覆盖 CJK 中文字形；
+  许可全文见 `crates/game-ui/assets/OFL.txt`（SIL Open Font License 1.1，含双版权声明）
+- 编辑器不支持中文输入法（IME 不可用），中文内容请复制粘贴；关卡设计已保证玩家无需手输中文
 
 ## 架构
 
