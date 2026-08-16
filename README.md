@@ -33,7 +33,8 @@ cargo run -p game-ui
 - 编译：裸 `rustc --edition 2021`，仅 std
 - 超时：编译 10s / 运行 2s，超时终止
 - 静态拦截：syn 扫描玩家代码中的 `std::fs` / `std::net` / `std::process` / `std::env` / `std::thread`
-- ⚠️ 开发期无进程隔离（bwrap 沙盒在计划②实现）。**本版本仅限本地学习使用，禁止公开分发。**
+- **安全状态：开发期沙盒（无进程隔离）**。玩家代码只受超时 + 静态拦截限制，尚未做 bwrap 真隔离（计划②）。
+- 🤝 欢迎贡献：本项目公开协作，PR 请附带测试；正式发布前必须完成 bwrap 沙盒（见 docs/superpowers/plans 计划②）。
 
 ## 素材与许可
 
