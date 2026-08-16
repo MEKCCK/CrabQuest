@@ -1,0 +1,4 @@
+kind = "panic"
+line = 3
+message_contains = "index out of bounds"
+classification = "array_index_oob"

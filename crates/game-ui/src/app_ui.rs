@@ -38,11 +38,20 @@ pub struct GameUi {
     quiz_sel: Option<usize>,
     busy: Busy,
     quit: bool,
+    /// 首次进入编辑器时显示一行「中文请复制粘贴」弱提示（IME 不可用，仅显示一次）
+    ime_hint_shown: bool,
 }
 
 impl GameUi {
     pub fn new() -> Self {
-        Self { code_buf: String::new(), last_level_id: None, quiz_sel: None, busy: Busy::None, quit: false }
+        Self {
+            code_buf: String::new(),
+            last_level_id: None,
+            quiz_sel: None,
+            busy: Busy::None,
+            quit: false,
+            ime_hint_shown: false,
+        }
     }
 
     /// 把 code_buf 回写进 app（TextEdit 每次改动后调用）
@@ -293,7 +302,14 @@ impl GameUi {
     }
 
     /// 普通关：可编辑代码编辑器（语法高亮 + 行号 gutter）
+    /// P1-06：layouter 尊重 TextEdit 传入的 wrap_width（超宽中文行换行不截断），
+    /// 代码区与行号 gutter 共用 TextStyle::Monospace（字号一致，禁止硬编码）。
     fn draw_code_body(&mut self, ui: &mut egui::Ui, app: &mut GameApp) {
+        if !self.ime_hint_shown {
+            // 弱提示：IME 不可用（egui-miniquad 无 IME 通道），中文只能粘贴
+            ui.label(egui::RichText::new("代码编辑器不支持中文输入法，中文内容请复制粘贴").weak());
+            self.ime_hint_shown = true;
+        }
         ui.horizontal(|ui| {
             // 行号 gutter（对齐用 monospace 字体）
             let line_count = self.code_buf.lines().count().max(1);
@@ -304,20 +320,10 @@ impl GameUi {
                 )
                 .selectable(false),
             );
-            // 编辑器
-            let mut layouter = |ui: &egui::Ui, text: &str, _wrap_width: f32| {
-                let mut job = egui::text::LayoutJob::default();
-                for span in tokenize(text) {
-                    job.append(
-                        &text[span.start..span.end],
-                        0.0,
-                        egui::TextFormat {
-                            font_id: egui::FontId::monospace(14.0),
-                            color: color_for(span.kind),
-                            ..Default::default()
-                        },
-                    );
-                }
+            // 编辑器（行号 gutter 与代码区共用 TextStyle::Monospace，字号一致）
+            let font_id = egui::TextStyle::Monospace.resolve(ui.style());
+            let mut layouter = move |ui: &egui::Ui, text: &str, wrap_width: f32| {
+                let job = code_layout_job(text, wrap_width, &font_id);
                 ui.fonts(|f| f.layout_job(job))
             };
             let resp = ui.add(
@@ -414,6 +420,42 @@ fn color_for(kind: TokenKind) -> egui::Color32 {
         TokenKind::Number => egui::Color32::from_rgb(181, 206, 168),
         TokenKind::Normal => egui::Color32::from_rgb(220, 220, 220),
     }
+}
+
+/// 构建编辑器代码区的着色 LayoutJob。
+/// `wrap_width` 是 TextEdit 传入的换行宽度（面板宽）：超宽行（如无空格的长中文）必须在此换行，
+/// 否则横向溢出被截断；`font_id` 必须来自 `TextStyle::Monospace.resolve(style)`，
+/// 与行号 gutter（`.monospace()`）同源，保证行号与代码字号一致。
+/// 注意：tokenize 会跳过空白与标点，这里必须把「间隙」也以 Normal 格式补进 job，
+/// 否则 galley 文本与代码不一致，换行宽度与光标/选区映射都会错位。
+fn code_layout_job(text: &str, wrap_width: f32, font_id: &egui::FontId) -> egui::text::LayoutJob {
+    let mut job = egui::text::LayoutJob::default();
+    job.wrap.max_width = wrap_width;
+    let mut cursor = 0;
+    let normal = egui::TextFormat {
+        font_id: font_id.clone(),
+        color: color_for(TokenKind::Normal),
+        ..Default::default()
+    };
+    for span in tokenize(text) {
+        if span.start > cursor {
+            job.append(&text[cursor..span.start], 0.0, normal.clone());
+        }
+        job.append(
+            &text[span.start..span.end],
+            0.0,
+            egui::TextFormat {
+                font_id: font_id.clone(),
+                color: color_for(span.kind),
+                ..Default::default()
+            },
+        );
+        cursor = span.end;
+    }
+    if cursor < text.len() {
+        job.append(&text[cursor..], 0.0, normal);
+    }
+    job
 }
 
 impl UiBackend for GameUi {
@@ -541,4 +583,109 @@ source = "s"
         assert_eq!(ui.code_buf, "fn main() { print!(\"1\"); }");
         assert_eq!(ui.quiz_sel, None);
     }
+    /// P1-06：layouter 必须尊重 TextEdit 传入的 wrap_width，超宽中文行（无空格）要换行。
+    #[test]
+    fn layouter_wraps_wide_cjk_line_at_wrap_width() {
+        let ctx = egui::Context::default();
+        let resolved = egui::TextStyle::Monospace.resolve(&egui::Style::default());
+        // 无空格的长中文行：若不换行会横向溢出面板
+        let cjk = "中文长行内容必须换行不能截断".repeat(20);
+        let job = code_layout_job(&cjk, 100.0, &resolved);
+        assert_eq!(
+            job.wrap.max_width, 100.0,
+            "LayoutJob 必须使用传入的 wrap_width，而不是 INFINITY"
+        );
+        let mut galley = None;
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            galley = Some(ctx.fonts(|f| f.layout_job(job.clone())));
+        });
+        let galley = galley.expect("布局应在 run 期间完成");
+        assert!(galley.rows.len() > 1, "100px 宽的 CJK 长行应换行成多行，实际 {} 行", galley.rows.len());
+
+        // 旧行为（wrap_width = INFINITY）回归对照：只有一行
+        let job_inf = code_layout_job(&cjk, f32::INFINITY, &resolved);
+        let mut galley_inf = None;
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            galley_inf = Some(ctx.fonts(|f| f.layout_job(job_inf.clone())));
+        });
+        assert_eq!(galley_inf.unwrap().rows.len(), 1, "INFINITY 宽度下 CJK 长行应保持单行");
+    }
+
+    /// P1-06：代码区字号必须来自 TextStyle::Monospace（与行号 gutter 同源），禁止硬编码 14/12 混用。
+    #[test]
+    fn layouter_uses_style_monospace_font_id() {
+        let resolved = egui::TextStyle::Monospace.resolve(&egui::Style::default());
+        assert_eq!(resolved.size, 12.0, "egui 默认 Monospace 字号应为 12.0");
+        let job = code_layout_job("fn main() {}", 200.0, &resolved);
+        for section in &job.sections {
+            assert_eq!(
+                section.format.font_id, resolved,
+                "代码区每个 span 的字号必须等于 TextStyle::Monospace 解析值（与行号一致）"
+            );
+        }
+    }
+
+    /// P1-06：编辑器实际绘制时，代码区与行号 gutter 字号一致（端到端，防调用点回归硬编码 14）。
+    #[test]
+    fn drawn_editor_uses_same_font_size_as_gutter() {
+        let ctx = egui::Context::default();
+        let mut app = test_app();
+        let mut ui = GameUi::new();
+        app.handle(Input::Enter).unwrap();
+        let out = ctx.run(egui::RawInput::default(), |ctx| {
+            ui.draw(ctx, &mut app);
+        });
+        let expected = egui::TextStyle::Monospace.resolve(&egui::Style::default()).size;
+        let mut code_sizes: Vec<f32> = Vec::new();
+        let mut gutter_sizes: Vec<f32> = Vec::new();
+        for clipped in &out.shapes {
+            if let egui::Shape::Text(t) = &clipped.shape {
+                let text = t.galley.text();
+                let sizes: Vec<f32> = t.galley.job.sections.iter().map(|s| s.format.font_id.size).collect();
+                if text.contains("fn main") {
+                    code_sizes.extend(sizes);
+                } else if !text.is_empty() && text.chars().all(|c| c.is_ascii_digit() || c == '\n') {
+                    gutter_sizes.extend(sizes);
+                }
+            }
+        }
+        assert!(!code_sizes.is_empty(), "应绘制出代码区文本");
+        assert!(!gutter_sizes.is_empty(), "应绘制出行号 gutter");
+        assert!(
+            code_sizes.iter().all(|&s| s == expected) && gutter_sizes.iter().all(|&s| s == expected),
+            "代码区 {code_sizes:?} 与 gutter {gutter_sizes:?} 字号不一致（期望 {expected}）"
+        );
+    }
+
+    /// P1-06：首次进入编辑器显示「中文请复制粘贴」弱提示，且只显示一次。
+    #[test]
+    fn ime_hint_shown_once_on_first_level_entry() {
+        let ctx = egui::Context::default();
+        let mut app = test_app();
+        let mut ui = GameUi::new();
+        app.handle(Input::Enter).unwrap(); // 进入关卡
+        let out1 = ctx.run(egui::RawInput::default(), |ctx| {
+            ui.draw(ctx, &mut app);
+        });
+        assert!(ui.ime_hint_shown, "首次绘制关卡后应标记提示已显示");
+        assert!(
+            shapes_contain_text(&out1.shapes, "复制粘贴"),
+            "首次进入编辑器应显示「中文请复制粘贴」提示"
+        );
+        let out2 = ctx.run(egui::RawInput::default(), |ctx| {
+            ui.draw(ctx, &mut app);
+        });
+        assert!(
+            !shapes_contain_text(&out2.shapes, "复制粘贴"),
+            "提示只应在首次进入时显示一次"
+        );
+    }
+
+    fn shapes_contain_text(shapes: &[egui::epaint::ClippedShape], needle: &str) -> bool {
+        shapes.iter().any(|clipped| match &clipped.shape {
+            egui::Shape::Text(t) => t.galley.text().contains(needle),
+            _ => false,
+        })
+    }
+
 }

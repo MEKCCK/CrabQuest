@@ -7,9 +7,11 @@ hint = "可能失败的操作返回 Result，成功与失败两种结果都要�
 hints = [
   "可能失败的操作返回 Result，两种结果都需要处理。",
   "错误在运行期：对 Err 直接取值触发 panic。见 book-cn ch09-02「可恢复的错误与 Result」：https://rustwiki.org/zh-CN/book/ch09-02-recoverable-errors-with-result.html",
-  "match result { Ok(n) => println!(\"{}\", n), Err(_) => println!(\"解析失败\") }\n用 match 分别处理成功与失败分支。",
+  "match result { Ok(n) => println!(\"{}\", n), Err(_) => println!(\"{FAIL_MSG}\") }\n用 match 分别处理成功与失败分支；失败分支打印 starter 内置常量 FAIL_MSG（无需手输中文）。",
 ]
 starter_code = '''
+const FAIL_MSG: &str = "解析失败";
+
 fn main() {
     let result = parse_number("not a number");
     println!("{}", result.unwrap());
