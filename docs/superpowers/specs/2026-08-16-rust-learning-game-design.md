@@ -13,7 +13,7 @@
 | 模块 | 选择 | 说明 |
 |---|---|---|
 | 图形 UI | **macroquad 0.4 + egui-macroquad 0.17（egui 0.31）** | 2D 游戏层（通关动画）+ 立即模式 UI |
-| 代码编辑器 | **自研轻量**：egui TextEdit + 自定义 layouter + syn 分词着色（行号、关键字/注释/字符串着色） | egui_code_editor 0.3.8 需 egui ^0.36，与 egui-macroquad 锁定的 ^0.31 冲突，弃用 |
+| 代码编辑器 | **自研轻量**：egui TextEdit + 自定义 layouter + **rustc_lexer 官方词法器**分词着色（行号、关键字/注释/字符串着色） | egui_code_editor 0.3.8 需 egui ^0.36，与 egui-macroquad 锁定的 ^0.31 冲突，弃用；rustc_lexer 是 rust-lang/rust 仓库发布的稳定 crate（syn 仍用于沙盒静态拦截） |
 | 校验 | rustc 子进程：编译 → 运行 → stdout 比对；错误解析**基于错误码 E0xxx**，不匹配字符串 | 抗 rustc 版本差异 |
 | 数据 | serde + toml（关卡文件、存档） | |
 | 沙盒 | **bwrap（bubblewrap）真隔离**（已安装，无需 root）；开发期兜底 = timeout + 临时目录 + syn 静态拦截 | firejail 未安装且无 apt |
@@ -114,7 +114,7 @@ source = "rustlings"           # 素材出处（许可标注）
 1. 主菜单：章节选择、显示已解锁关卡、玩家进度/得分
 2. 关卡界面布局：
    - 左上：关卡标题、任务描述、提示按钮
-   - 主体：代码编辑区（行号 + 语法着色）
+   - 主体：代码编辑区（行号 + 语法着色，rustc_lexer 分词）
    - 下方按钮：【提交运行】【显示提示】【重置代码】
    - 底部：反馈面板
 3. 提交结果分支：
@@ -140,7 +140,7 @@ source = "rustlings"           # 素材出处（许可标注）
 
 - **计划①（P1+P2，MVP → 完整关卡系统）**：
   - macroquad+egui 窗口与界面（菜单/关卡/反馈）
-  - 轻量代码编辑器（TextEdit + 行号 + syn 着色）
+  - 轻量代码编辑器（TextEdit + 行号 + rustc_lexer 着色）
   - TOML 关卡加载系统（L0-L4 分层）
   - compile → run → compare 校验闭环 + 错误码解析映射
   - 存档系统
