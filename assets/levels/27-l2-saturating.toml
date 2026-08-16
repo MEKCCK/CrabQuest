@@ -1,0 +1,28 @@
+[[level]]
+id = "l2-saturating"
+title = "整数溢出：饱和乘法"
+tier = "l2"
+description = "20! 累乘超过 u32 上限会 panic。目标输出两行：factorial(5) 与 factorial(20) 的结果。涉及概念：整数溢出。"
+hint = "溢出不该直接崩溃，Rust 的算术方法可以在边界处停住。"
+hints = [
+  "溢出不该直接崩溃，Rust 的算术方法可以在边界处停住。",
+  "运行期 panic：乘法溢出。改用带「饱和」语义的方法。见 book-cn ch03-02 数据类型：https://rustwiki.org/zh-CN/book/ch03-02-data-types.html",
+  "acc = acc.saturating_mul(step);\n把普通乘法换成 saturating_mul，溢出时停在 u32 最大值。",
+]
+starter_code = '''
+fn factorial(n: u32) -> u32 {
+    let mut acc: u32 = 1;
+    for step in 1..=n {
+        acc *= step;
+    }
+    acc
+}
+
+fn main() {
+    println!("factorial(5) = {}", factorial(5));
+    println!("factorial(20) = {}", factorial(20));
+}
+'''
+expect_output = '''factorial(5) = 120
+factorial(20) = 4294967295'''
+source = "100-exercises-to-learn-rust (exercises/02_basic_calculator/09_saturating/src/lib.rs, CC BY-NC 4.0，结构借鉴/代码重写，R1 改写：测试搬 main)"
