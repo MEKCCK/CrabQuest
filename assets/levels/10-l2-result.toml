@@ -3,8 +3,10 @@ id = "l2-result"
 title = "Result 与错误处理"
 tier = "l2"
 description = "parse_number(\"not a number\") 返回 Err，result.unwrap() 会 panic。用 match 处理错误，输出「解析失败」。"
-hint = "用 match result { Ok(n) => println!(\"{}\", n), Err(_) => println!(\"解析失败\") } 替换 unwrap。"
+hint = "用 match 处理 result：Err(_) 分支打印 starter_code 内置的 FAIL_MSG 常量（无需手输中文），替换 unwrap。"
 starter_code = '''
+const FAIL_MSG: &str = "解析失败";
+
 fn main() {
     let result = parse_number("not a number");
     println!("{}", result.unwrap());
