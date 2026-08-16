@@ -1,9 +1,11 @@
 use crate::error::GameError;
-use crate::level::{Level, LevelSet};
+use crate::level::{parse_levels, Level, LevelSet};
 use crate::sandbox::Sandbox;
 use crate::save::{LevelProgress, LevelState, SaveData};
 use crate::validate::mapper::ErrorMapper;
 use crate::validate::{validate, Validation};
+use std::collections::HashSet;
+use std::path::Path;
 
 /// XP 定价表（v3 §7.2，替换旧 XP_PER_PASS=20）：
 /// 首次通关（普通关）+25；完美通关（fail_count==0）+10；连击加成（通过后 combo>=3）+5；
@@ -122,8 +124,112 @@ pub fn hint_unlock_state(
     }
 }
 
+/// P4-26：单个自定义关卡文件的加载失败信息（中文呈现）。
+/// 启动日志直接打印 `message()`，游戏内地图页以同样文案提示。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CustomLevelError {
+    /// 文件名（如 "my-level.toml"），用于「自定义关卡 X 加载失败：原因」
+    pub file: String,
+    /// 中文失败原因（TOML 解析 / schema 校验 / id 冲突等）
+    pub reason: String,
+}
+
+impl CustomLevelError {
+    pub fn message(&self) -> String {
+        format!("自定义关卡 {} 加载失败：{}", self.file, self.reason)
+    }
+}
+
+/// P4-26：从目录逐文件加载自定义关卡（独立「自定义章节」，不并入内置线性链）。
+///
+/// - 目录不存在 → `(空, 空)`：无自定义关卡 = 行为与现状一致（不报错、不显示章节）；
+/// - 单文件解析/校验失败 → 只拒绝该文件（记录中文原因），其余文件照常加载，不崩溃；
+/// - id 与内置关卡冲突、或自定义集内重复 → 拒绝整个文件（其余文件不受影响）。
+///
+/// schema 校验复用 `parse_levels`（quiz options 2-6 / answer_index 越界 / hint_unlock
+/// 与 hints 等长 / source 非空 / expect_panic 与 expect_output 互斥等）。
+pub fn load_custom_levels(
+    dir: &Path,
+    builtin_ids: &HashSet<String>,
+) -> (Vec<Level>, Vec<CustomLevelError>) {
+    if !dir.exists() {
+        return (Vec::new(), Vec::new());
+    }
+    let mut files: Vec<_> = match std::fs::read_dir(dir) {
+        Ok(rd) => rd
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.extension().map_or(false, |x| x == "toml"))
+            .collect(),
+        Err(e) => {
+            return (
+                Vec::new(),
+                vec![CustomLevelError {
+                    file: dir.display().to_string(),
+                    reason: format!("目录读取失败：{e}"),
+                }],
+            );
+        }
+    };
+    files.sort();
+    let mut levels = Vec::new();
+    let mut errors = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for f in files {
+        let name = f
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| f.display().to_string());
+        let content = match std::fs::read_to_string(&f) {
+            Ok(c) => c,
+            Err(e) => {
+                errors.push(CustomLevelError {
+                    file: name.clone(),
+                    reason: format!("文件读取失败：{e}"),
+                });
+                continue;
+            }
+        };
+        let parsed = match parse_levels(&content) {
+            Ok(p) => p,
+            Err(e) => {
+                errors.push(CustomLevelError {
+                    file: name.clone(),
+                    reason: e.to_string(),
+                });
+                continue;
+            }
+        };
+        // id 唯一性（先只读检查再落 seen，避免整文件被拒后污染后续判定）
+        let conflict = parsed
+            .iter()
+            .find(|l| builtin_ids.contains(&l.id))
+            .or_else(|| parsed.iter().find(|l| seen.contains(&l.id)));
+        if let Some(lvl) = conflict {
+            errors.push(CustomLevelError {
+                file: name.clone(),
+                reason: if builtin_ids.contains(&lvl.id) {
+                    format!("关卡 id「{}」与内置关卡冲突", lvl.id)
+                } else {
+                    format!("关卡 id「{}」在自定义关卡中重复", lvl.id)
+                },
+            });
+            continue;
+        }
+        for lvl in &parsed {
+            seen.insert(lvl.id.clone());
+        }
+        levels.extend(parsed);
+    }
+    (levels, errors)
+}
+
 pub struct Engine {
+    /// 全部关卡（内置在前 + 自定义追加在后）；`builtin_count` 为分界点
     pub level_set: LevelSet,
+    /// 内置关卡数量：`level_set.levels[..builtin_count]` 为内置，
+    /// `[builtin_count..]` 为自定义（独立「自定义章节」）
+    pub builtin_count: usize,
     pub save: SaveData,
     pub current: Option<usize>,
     pub mapper: ErrorMapper,
@@ -137,7 +243,77 @@ impl Engine {
         mapper: ErrorMapper,
         sandbox: Box<dyn Sandbox>,
     ) -> Self {
-        Self { level_set, save, current: None, mapper, sandbox }
+        Self::with_custom_levels(level_set, Vec::new(), save, mapper, sandbox)
+    }
+
+    /// P4-26：内置关卡 + 自定义关卡构造引擎。自定义关卡追加到内置之后形成独立章节；
+    /// 未存档的自定义关卡预置为 Unlocked（可直接挑战，不参与内置线性解锁链），
+    /// 已有存档（Passed/Unlocked）原样保留。
+    pub fn with_custom_levels(
+        mut level_set: LevelSet,
+        custom_levels: Vec<Level>,
+        save: SaveData,
+        mapper: ErrorMapper,
+        sandbox: Box<dyn Sandbox>,
+    ) -> Self {
+        let builtin_count = level_set.len();
+        level_set.levels.extend(custom_levels);
+        let mut engine = Self { level_set, builtin_count, save, current: None, mapper, sandbox };
+        engine.preset_custom_levels();
+        engine
+    }
+
+    /// 为每个自定义关卡补默认进度（Unlocked，可直接挑战）；已有存档条目原样保留。
+    fn preset_custom_levels(&mut self) {
+        for lvl in &self.level_set.levels[self.builtin_count..] {
+            self.save.level_states.entry(lvl.id.clone()).or_insert_with(|| LevelProgress {
+                state: LevelState::Unlocked,
+                ..LevelProgress::default()
+            });
+        }
+    }
+
+    /// 索引是否落在自定义章节（>= builtin_count）
+    pub fn is_custom_index(&self, index: usize) -> bool {
+        index >= self.builtin_count
+    }
+
+    /// 内置关卡 id 集合（成就/rank 只按内置判定）
+    pub fn builtin_ids(&self) -> HashSet<String> {
+        self.level_set.levels[..self.builtin_count]
+            .iter()
+            .map(|l| l.id.clone())
+            .collect()
+    }
+
+    pub fn is_builtin_id(&self, id: &str) -> bool {
+        self.level_set.levels[..self.builtin_count].iter().any(|l| l.id == id)
+    }
+
+    /// 内置章节已通关关卡数（rank 判定依据；自定义关卡不计入）。
+    /// 供 `rank_for()` 使用：段位推进只认内置进度（v3 §7.3 + P4-26 存档隔离）。
+    pub fn builtin_completed_count(&self) -> usize {
+        self.save
+            .level_states
+            .iter()
+            .filter(|(id, p)| p.state == LevelState::Passed && self.is_builtin_id(id))
+            .count()
+    }
+
+    /// 同章节内的下一关：内置章节末尾不跨入自定义章节，自定义章节末尾返回 None。
+    /// （自定义章节独立：进度/解锁/成就均与内置隔离）
+    pub fn next_in_chapter(&self, index: usize) -> Option<usize> {
+        let next = index + 1;
+        if next >= self.level_set.len() {
+            return None;
+        }
+        if self.is_custom_index(index) {
+            Some(next) // 已在自定义章节：next 必然仍在自定义区间
+        } else if next < self.builtin_count {
+            Some(next)
+        } else {
+            None // 内置章节末尾：不跨入自定义章节
+        }
     }
 
     pub fn new_game(&mut self) {
@@ -149,6 +325,12 @@ impl Engine {
                 .level_states
                 .entry(lvl.id.clone())
                 .or_insert_with(LevelProgress::default);
+        }
+        // P4-26：自定义章节独立解锁——全部可直接挑战（不参与内置线性链）
+        for lvl in &self.level_set.levels[self.builtin_count..] {
+            if let Some(p) = self.save.level_states.get_mut(&lvl.id) {
+                p.state = LevelState::Unlocked;
+            }
         }
         self.unlock_first();
     }
@@ -201,6 +383,10 @@ impl Engine {
 
         let result = validate(&level, code, &self.mapper, self.sandbox.as_ref())?;
 
+        // P4-26：自定义关卡隔离——连击/成就/rank 只认内置关卡；
+        // 自定义进度照常写入 level_states，但不推进内置元进度
+        let is_custom = self.is_custom_index(idx);
+
         let mut xp_gained = 0;
         // P2-10：本次通关上下文（id, fail_count, hints_used 是否为空），
         // 供 check_achievements 判定完美类成就（Fail 分支为 None）
@@ -209,8 +395,10 @@ impl Engine {
             Validation::Pass { .. } => {
                 let pass_key = format!("{}:pass", level.id);
                 let first_pass = !self.save.completed_steps.contains(&pass_key);
-                self.save.combo += 1;
-                self.save.max_combo = self.save.max_combo.max(self.save.combo);
+                if !is_custom {
+                    self.save.combo += 1;
+                    self.save.max_combo = self.save.max_combo.max(self.save.combo);
+                }
                 let entry = self
                     .save
                     .level_states
@@ -241,14 +429,17 @@ impl Engine {
                     entry.fail_count,
                     entry.hints_used.is_empty(),
                 ));
-                if let Some(next) = self.level_set.levels.get(idx + 1) {
-                    let n = self
-                        .save
-                        .level_states
-                        .entry(next.id.clone())
-                        .or_insert_with(LevelProgress::default);
-                    if n.state == LevelState::Locked {
-                        n.state = LevelState::Unlocked;
+                if !is_custom && idx + 1 < self.builtin_count {
+                    // 内置线性解锁链：仅内置章节内推进；内置末尾不跨入自定义章节
+                    if let Some(next) = self.level_set.levels.get(idx + 1) {
+                        let n = self
+                            .save
+                            .level_states
+                            .entry(next.id.clone())
+                            .or_insert_with(LevelProgress::default);
+                        if n.state == LevelState::Locked {
+                            n.state = LevelState::Unlocked;
+                        }
                     }
                 }
                 // P2-08：通关回血 +1（cap 5）；P2-09：通关 = 活跃
@@ -256,7 +447,9 @@ impl Engine {
                 self.touch_activity();
             }
             Validation::Fail { errors, .. } => {
-                self.save.combo = 0;
+                if !is_custom {
+                    self.save.combo = 0;
+                }
                 self.save.total_errors += 1;
                 let entry = self
                     .save
@@ -275,17 +468,40 @@ impl Engine {
                 }
             }
         }
-        // P2-10：统一成就检查（纯函数，HashSet 幂等）
+        // P2-10：统一成就检查（纯函数，HashSet 幂等）。
+        // P4-26：成就只按内置关卡判定——快照过滤自定义 id；total_levels 用内置数；
+        // 自定义通关上下文不参与完美类成就判定（combo 已隔离：自定义通关/失败不增减连击）。
+        let builtin_ids = self.builtin_ids();
+        let builtin_states: std::collections::HashMap<String, LevelProgress> = self
+            .save
+            .level_states
+            .iter()
+            .filter(|(id, _)| builtin_ids.contains(*id))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        let builtin_steps: HashSet<String> = self
+            .save
+            .completed_steps
+            .iter()
+            .filter(|s| {
+                s.rsplit_once(':')
+                    .map(|(id, _)| builtin_ids.contains(id))
+                    .unwrap_or(false)
+            })
+            .cloned()
+            .collect();
+        let builtin_just_passed = just_passed
+            .as_ref()
+            .filter(|(id, _, _)| builtin_ids.contains(id))
+            .map(|(id, fail_count, hints_empty)| (id.as_str(), *fail_count, *hints_empty));
         let newly = crate::achievements::check_achievements(&crate::achievements::AchievementCheck {
-            level_states: &self.save.level_states,
-            completed_steps: &self.save.completed_steps,
+            level_states: &builtin_states,
+            completed_steps: &builtin_steps,
             combo: self.save.combo,
             seen_error_codes: &self.save.seen_error_codes,
-            total_levels: self.level_set.len(),
+            total_levels: self.builtin_count,
             already: &self.save.achievements,
-            just_passed: just_passed
-                .as_ref()
-                .map(|(id, fail_count, hints_empty)| (id.as_str(), *fail_count, *hints_empty)),
+            just_passed: builtin_just_passed,
         });
         for id in newly {
             self.save.achievements.insert(id);
@@ -1016,5 +1232,188 @@ source = "rustlings"
         e.reveal_hint("l0-hello", 0);
         e.submit("fn main() { println!(\"x has the value {}\", 5); }").unwrap();
         assert!(e.save.achievements.contains("no_hint_perfect"), "已发成就不因后看 hint 撤回");
+    }
+
+    // ===== P4-26：自定义关卡导入（独立章节 + 存档隔离）=====
+
+    const CUSTOM_LEVEL_TOML: &str = r#"
+[[level]]
+id = "c1-hello"
+title = "自定义·你好"
+tier = "l0"
+description = "d"
+starter_code = "fn main() { println!(\"custom ok\"); }"
+expect_output = "custom ok"
+source = "community"
+"#;
+
+    fn custom_level() -> Level {
+        parse_levels(CUSTOM_LEVEL_TOML).unwrap().remove(0)
+    }
+
+    fn custom_engine() -> Engine {
+        let builtin = LevelSet { levels: parse_levels(LEVELS).unwrap() };
+        Engine::with_custom_levels(
+            builtin,
+            vec![custom_level()],
+            SaveData::default(),
+            ErrorMapper::default_fallback(),
+            Box::new(DevSandbox::new()),
+        )
+    }
+
+    fn two_builtin_ids() -> HashSet<String> {
+        ["l0-hello", "l1-move"].into_iter().map(String::from).collect()
+    }
+
+    #[test]
+    fn load_custom_levels_single_valid_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("01-custom.toml"), CUSTOM_LEVEL_TOML).unwrap();
+        let (levels, errors) = load_custom_levels(dir.path(), &two_builtin_ids());
+        assert!(errors.is_empty(), "合法文件不应报错: {errors:?}");
+        assert_eq!(levels.len(), 1);
+        assert_eq!(levels[0].id, "c1-hello");
+    }
+
+    #[test]
+    fn load_custom_levels_builtin_id_collision_rejects_file() {
+        let dir = tempfile::tempdir().unwrap();
+        // 冲突文件（id 与内置相同）
+        std::fs::write(
+            dir.path().join("01-conflict.toml"),
+            "[[level]]\nid = \"l0-hello\"\ntitle = \"t\"\ntier = \"l0\"\ndescription = \"d\"\nstarter_code = \"fn main() {}\"\nexpect_output = \"\"\nsource = \"x\"\n",
+        )
+        .unwrap();
+        // 合法文件：应照常加载
+        std::fs::write(dir.path().join("02-ok.toml"), CUSTOM_LEVEL_TOML).unwrap();
+        let (levels, errors) = load_custom_levels(dir.path(), &two_builtin_ids());
+        assert_eq!(levels.len(), 1, "冲突文件被拒后其余文件照常加载");
+        assert_eq!(levels[0].id, "c1-hello");
+        assert_eq!(errors.len(), 1);
+        let msg = errors[0].message();
+        assert!(msg.contains("自定义关卡"), "应含中文「自定义关卡」: {msg}");
+        assert!(msg.contains("加载失败"), "应含中文「加载失败」: {msg}");
+        assert!(msg.contains("与内置关卡冲突"), "应含中文冲突原因: {msg}");
+    }
+
+    #[test]
+    fn load_custom_levels_per_file_errors_no_crash() {
+        let dir = tempfile::tempdir().unwrap();
+        // 非法 TOML
+        std::fs::write(dir.path().join("01-bad-toml.toml"), "not [ valid toml [[[").unwrap();
+        // quiz answer_index 越界（schema 校验失败）
+        std::fs::write(
+            dir.path().join("02-bad-quiz.toml"),
+            "[[level]]\nid = \"q1\"\ntitle = \"t\"\ntier = \"l0\"\ndescription = \"d\"\nkind = \"quiz\"\noptions = [\"a\", \"b\"]\nanswer_index = 9\nstarter_code = \"fn main() {}\"\nsource = \"x\"\n",
+        )
+        .unwrap();
+        // source 缺失
+        std::fs::write(
+            dir.path().join("03-no-source.toml"),
+            "[[level]]\nid = \"s1\"\ntitle = \"t\"\ntier = \"l0\"\ndescription = \"d\"\nstarter_code = \"fn main() {}\"\nexpect_output = \"\"\n",
+        )
+        .unwrap();
+        // 合法文件
+        std::fs::write(dir.path().join("04-ok.toml"), CUSTOM_LEVEL_TOML).unwrap();
+        let (levels, errors) = load_custom_levels(dir.path(), &two_builtin_ids());
+        assert_eq!(levels.len(), 1, "3 个坏文件被逐文件拒绝，合法文件照常加载");
+        assert_eq!(levels[0].id, "c1-hello");
+        assert_eq!(errors.len(), 3);
+        for e in &errors {
+            assert!(e.message().contains("加载失败"), "逐文件中文错误: {}", e.message());
+        }
+        assert!(errors[0].reason.contains("TOML"), "TOML 解析错误原因: {}", errors[0].reason);
+        assert!(errors[1].reason.contains("越界"), "quiz 越界原因: {}", errors[1].reason);
+        assert!(errors[2].reason.contains("source"), "source 缺失原因: {}", errors[2].reason);
+    }
+
+    #[test]
+    fn load_custom_levels_missing_dir_returns_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("nope");
+        let (levels, errors) = load_custom_levels(&missing, &HashSet::new());
+        assert!(levels.is_empty());
+        assert!(errors.is_empty(), "目录不存在 = 无自定义关卡，不报错");
+    }
+
+    #[test]
+    fn custom_levels_unlocked_and_playable() {
+        let mut e = custom_engine();
+        e.new_game();
+        // 自定义关卡默认 Unlocked，可直接挑战（不依赖内置线性链）
+        assert_eq!(e.save.level_states.get("c1-hello").unwrap().state, LevelState::Unlocked);
+        assert_eq!(e.builtin_count, 2);
+        assert!(e.is_custom_index(2));
+        e.start_level(2).unwrap();
+        assert_eq!(e.current, Some(2));
+        let res = e.submit("fn main() { println!(\"custom ok\"); }").unwrap();
+        assert!(matches!(res, Validation::Pass { .. }));
+        assert_eq!(e.save.level_states.get("c1-hello").unwrap().state, LevelState::Passed);
+    }
+
+    #[test]
+    fn custom_pass_does_not_trigger_achievements_or_rank() {
+        let mut e = custom_engine();
+        e.new_game();
+        e.start_level(2).unwrap();
+        e.submit("fn main() { println!(\"custom ok\"); }").unwrap();
+        // 自定义通关不触发任何成就（first_steps/champion 等）
+        assert!(e.save.achievements.is_empty(), "自定义通关不应触发成就: {:?}", e.save.achievements);
+        assert_eq!(e.builtin_completed_count(), 0, "rank 只认内置进度");
+        assert_eq!(crate::rank::rank_for(e.builtin_completed_count()).level, 1);
+        // 存档隔离：自定义进度本身照常落盘（level_states 支持任意 id）
+        assert_eq!(e.save.level_states.get("c1-hello").unwrap().state, LevelState::Passed);
+        assert!(e.save.completed_steps.contains("c1-hello:pass"));
+        // 再通关内置 → first_steps 正常触发（成就体系未被自定义污染）
+        e.start_level(0).unwrap();
+        e.submit("fn main() { println!(\"x has the value {}\", 5); }").unwrap();
+        assert!(e.save.achievements.contains("first_steps"));
+        assert_eq!(e.builtin_completed_count(), 1);
+    }
+
+    #[test]
+    fn custom_pass_does_not_touch_builtin_combo() {
+        let mut e = custom_engine();
+        e.new_game();
+        // 自定义通关：全局 combo 不动（combo 成就不被自定义刷）
+        e.start_level(2).unwrap();
+        e.submit("fn main() { println!(\"custom ok\"); }").unwrap();
+        assert_eq!(e.save.combo, 0, "自定义通关不累加内置连击");
+        // 自定义失败：不重置内置连击
+        e.start_level(0).unwrap();
+        e.submit("fn main() { println!(\"x has the value {}\", 5); }").unwrap();
+        assert_eq!(e.save.combo, 1);
+        e.start_level(2).unwrap();
+        e.submit("fn main() { println!(\"wrong\"); }").unwrap();
+        assert_eq!(e.save.combo, 1, "自定义失败不打断内置连击");
+    }
+
+    #[test]
+    fn next_in_chapter_stays_within_chapter() {
+        let e = custom_engine();
+        // 内置：0 → 1；内置末尾（1）→ None（不跨入自定义章节）
+        assert_eq!(e.next_in_chapter(0), Some(1));
+        assert_eq!(e.next_in_chapter(1), None);
+        // 自定义：2（仅一关）→ None
+        assert_eq!(e.next_in_chapter(2), None);
+    }
+
+    #[test]
+    fn custom_pass_save_roundtrip_persists() {
+        let mut e = custom_engine();
+        e.new_game();
+        e.start_level(2).unwrap();
+        e.submit("fn main() { println!(\"custom ok\"); }").unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("save.toml");
+        crate::save::save(&e.save, &p).unwrap();
+        let loaded = crate::save::load(&p).unwrap();
+        assert_eq!(
+            loaded.level_states.get("c1-hello").unwrap().state,
+            LevelState::Passed,
+            "自定义进度存档回读保留"
+        );
+        assert!(loaded.completed_steps.contains("c1-hello:pass"));
     }
 }

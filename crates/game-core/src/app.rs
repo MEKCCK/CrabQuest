@@ -39,6 +39,9 @@ pub struct MapEntry {
 pub struct ChapterMapData {
     pub selected: usize,
     pub entries: Vec<MapEntry>,
+    /// P4-26：自定义章节起始下标（= 内置关卡数）。`entries[..custom_start]` 为内置章节，
+    /// `entries[custom_start..]` 为「自定义关卡」独立章节；无自定义关卡时 == entries.len()。
+    pub custom_start: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -107,13 +110,21 @@ pub struct GameApp {
     /// P3-19：错误卡「第 N 行」点击 → 编辑器光标跳转目标（0-based 行号）。
     /// UI 在应用到 TextEdit 光标后调用 `take_focus_line` 清除（一次性，避免重渲染反复跳回）。
     pub focus_line: Option<usize>,
+    /// P4-26：自定义关卡加载失败列表（已格式化为「自定义关卡 X 加载失败：原因」）。
+    /// 启动日志已打印；地图页顶部以警示框呈现（游戏内提示）。
+    pub custom_load_errors: Vec<String>,
 }
 
 impl GameApp {
-    pub fn new(mut engine: Engine) -> Self {
+    pub fn new(engine: Engine) -> Self {
+        Self::with_custom_load_errors(engine, Vec::new())
+    }
+
+    /// P4-26：携带自定义关卡加载错误构造应用（游戏内提示；无错误时等价于 `new`）。
+    pub fn with_custom_load_errors(mut engine: Engine, custom_load_errors: Vec<String>) -> Self {
         engine.unlock_first();
         let screen = Self::build_map(&engine, 0);
-        Self { engine, screen, last_level: None, focus_line: None }
+        Self { engine, screen, last_level: None, focus_line: None, custom_load_errors }
     }
 
     fn build_map(engine: &Engine, selected: usize) -> Screen {
@@ -131,7 +142,11 @@ impl GameApp {
                 MapEntry { level: l.clone(), state }
             })
             .collect();
-        Screen::ChapterMap(ChapterMapData { selected, entries })
+        Screen::ChapterMap(ChapterMapData {
+            selected,
+            entries,
+            custom_start: engine.builtin_count,
+        })
     }
 
     fn build_menu(engine: &Engine) -> Screen {
@@ -281,11 +296,11 @@ impl GameApp {
                 let result = self.engine.submit(&d.code)?;
                 match result {
                     Validation::Pass { xp_gained } => {
+                        // P4-26：下一关标题只在同章节内取（内置末尾/自定义末尾 → None）
                         let unlocked_next = self
                             .engine
-                            .level_set
-                            .levels
-                            .get(d.index + 1)
+                            .next_in_chapter(d.index)
+                            .and_then(|n| self.engine.level_set.levels.get(n))
                             .map(|l| l.title.clone());
                         self.screen = Screen::Feedback(FeedbackData {
                             passed: true,
@@ -384,12 +399,15 @@ impl GameApp {
             Input::Enter => {
                 if f.passed {
                     let idx = self.engine.current.unwrap_or(0);
-                    let next = idx + 1;
-                    if next < self.engine.level_set.len() {
-                        self.engine.start_level(next)?;
-                        self.screen = self.build_level(next)?;
-                    } else {
-                        self.screen = Self::build_map(&self.engine, 0);
+                    // P4-26：同章节内推进（内置末尾/自定义末尾 → 回地图，不跨章节）
+                    match self.engine.next_in_chapter(idx) {
+                        Some(next) => {
+                            self.engine.start_level(next)?;
+                            self.screen = self.build_level(next)?;
+                        }
+                        None => {
+                            self.screen = Self::build_map(&self.engine, 0);
+                        }
                     }
                 } else if let Some(prev) = self.last_level.clone() {
                     // P1-03：返回编辑器，反馈面板底部固定保留
@@ -931,5 +949,110 @@ source = "rustlings"
             Screen::Level(d) => assert!(!d.reference_revealed, "重进关卡参考答案未确认"),
             other => panic!("expected Level, got {other:?}"),
         }
+    }
+
+    // ===== P4-26：自定义关卡章节（地图分区 + 游玩闭环）=====
+
+    const CUSTOM_LEVEL_TOML: &str = r#"
+[[level]]
+id = "c1-hello"
+title = "自定义·你好"
+tier = "l0"
+description = "d"
+starter_code = "fn main() { println!(\"custom ok\"); }"
+expect_output = "custom ok"
+source = "community"
+"#;
+
+    fn custom_app() -> GameApp {
+        let builtin = LevelSet { levels: parse_levels(LEVELS).unwrap() };
+        let custom = parse_levels(CUSTOM_LEVEL_TOML).unwrap();
+        let engine = Engine::with_custom_levels(
+            builtin,
+            custom,
+            Default::default(),
+            ErrorMapper::default_fallback(),
+            Box::new(DevSandbox::new()),
+        );
+        GameApp::new(engine)
+    }
+
+    #[test]
+    fn map_splits_builtin_and_custom_chapters() {
+        let a = custom_app();
+        match a.screen() {
+            Screen::ChapterMap(m) => {
+                assert_eq!(m.entries.len(), 3);
+                assert_eq!(m.custom_start, 2, "内置 2 关在前，自定义从下标 2 开始");
+                assert_eq!(m.entries[2].level.id, "c1-hello");
+                // 自定义关卡无存档时显示为可挑战（Unlocked），不是未解锁
+                assert_eq!(m.entries[2].state, LevelState::Unlocked);
+            }
+            other => panic!("expected ChapterMap, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn custom_level_plays_compile_compare_save_roundtrip() {
+        let mut a = custom_app();
+        // 从地图导航到自定义关卡（Down×2 → Enter）
+        a.handle(Input::Down).unwrap();
+        a.handle(Input::Down).unwrap();
+        a.handle(Input::Enter).unwrap();
+        match a.screen() {
+            Screen::Level(d) => {
+                assert_eq!(d.level.id, "c1-hello");
+                assert_eq!(d.index, 2, "自定义关卡全局索引 2");
+            }
+            other => panic!("expected Level c1-hello, got {other:?}"),
+        }
+        // 编译 + 输出比对：正确代码直接通过
+        a.handle(Input::Submit).unwrap();
+        match a.screen() {
+            Screen::Feedback(f) => {
+                assert!(f.passed, "自定义关卡输出比对应通过");
+                assert!(f.errors.is_empty() && f.expectation.is_none() && f.panic.is_none());
+            }
+            other => panic!("expected Feedback, got {other:?}"),
+        }
+        // 存档落盘 + 回读：自定义进度保留（存档隔离的「可存」侧）
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("save.toml");
+        crate::save::save(a.save_ref(), &p).unwrap();
+        let loaded = crate::save::load(&p).unwrap();
+        assert_eq!(loaded.level_states.get("c1-hello").unwrap().state, LevelState::Passed);
+        // 成就/rank 侧不触发
+        assert!(a.engine.save.achievements.is_empty(), "自定义通关不触发成就");
+        assert_eq!(a.engine.builtin_completed_count(), 0);
+        // 通关后 Enter：自定义章节末尾 → 回地图（不越界）
+        a.handle(Input::Enter).unwrap();
+        match a.screen() {
+            Screen::ChapterMap(m) => {
+                assert_eq!(m.entries[2].state, LevelState::Passed, "回地图后自定义关显示已通关");
+            }
+            other => panic!("expected ChapterMap, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn custom_load_errors_carried_into_app() {
+        let builtin = LevelSet { levels: parse_levels(LEVELS).unwrap() };
+        let engine = Engine::new(
+            builtin,
+            Default::default(),
+            ErrorMapper::default_fallback(),
+            Box::new(DevSandbox::new()),
+        );
+        let errs = vec!["自定义关卡 bad.toml 加载失败：TOML 解析失败：xxx".to_string()];
+        let a = GameApp::with_custom_load_errors(engine, errs.clone());
+        assert_eq!(a.custom_load_errors, errs);
+        // 无错误时 new 等价于空错误列表
+        let plain = GameApp::new(Engine::new(
+            LevelSet { levels: parse_levels(LEVELS).unwrap() },
+            Default::default(),
+            ErrorMapper::default_fallback(),
+            Box::new(DevSandbox::new()),
+        ));
+        assert!(plain.custom_load_errors.is_empty());
     }
 }
