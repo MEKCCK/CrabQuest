@@ -13,3 +13,4 @@ pub use save::{load as load_save, save as save_game, LevelProgress, LevelState, 
 
 pub use validate::error_parser::{parse_rustc_stderr, CompileError};
 pub use validate::mapper::{ErrorInfo, ErrorMapper};
+pub use validate::{validate, Validation};
