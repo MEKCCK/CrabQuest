@@ -1,0 +1,24 @@
+[[level]]
+id = "l1-strings"
+title = "字符串：返回 String"
+tier = "l1"
+description = "current_favorite_color 声明返回 String，函数体返回的却是字符串字面量。目标输出一行颜色名。涉及概念：String 与 &str。"
+hint = "函数声明返回 String，函数体实际返回的类型必须与签名一致。"
+hints = [
+  "函数声明返回 String，函数体实际返回的类型必须与签名一致。",
+  "E0308 类型不匹配：函数体返回 &str，签名要求 String。见 book-cn ch08-02「字符串」：https://rustwiki.org/zh-CN/book/ch08-02-strings.html",
+  "\"blue\".to_string()\n函数体返回 String 类型，把字符串字面量转为 String。",
+]
+starter_code = '''
+// TODO: 在不修改函数签名的情况下修复编译错误。
+fn current_favorite_color() -> String {
+    "blue"
+}
+
+fn main() {
+    let answer = current_favorite_color();
+    println!("My current favorite color is {answer}");
+}
+'''
+expect_output = "My current favorite color is blue"
+source = "rustlings (exercises/09_strings/strings1.rs, v6.5.0, MIT，注释中文化)"

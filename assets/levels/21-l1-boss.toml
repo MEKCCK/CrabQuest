@@ -1,0 +1,51 @@
+[[level]]
+id = "l1-boss"
+title = "Boss：移动、借用与 Clone 综合"
+tier = "l1"
+description = "Note 需要追加正文，但当前绑定不可变，追加操作无法编译。目标输出两行：标题与追加后的正文。涉及概念：移动（move）、借用、Clone 与可变借用。"
+hint = "追加正文需要可变借用，只有可变绑定才能被可变借用。"
+hints = [
+  "追加正文需要可变借用，只有可变绑定才能被可变借用。",
+  "E0596 无法可变借用：note 未声明为 mut。见 book-cn ch04-02「引用与借用」：https://rustwiki.org/zh-CN/book/ch04-02-references-and-borrowing.html",
+  "let mut note = Note::new(\"今日计划\".to_string(), \"写代码\".to_string());\n绑定声明为 mut，允许后续的可变借用。",
+]
+starter_code = '''
+struct Note {
+    title: String,
+    body: String,
+}
+
+impl Note {
+    // new 按值接收两个 String：所有权移动（move）进结构体。
+    fn new(title: String, body: String) -> Note {
+        Note { title, body }
+    }
+
+    // 读取标题：借用 &self，返回时用 clone 复制一份，不移动所有权。
+    fn title(&self) -> String {
+        self.title.clone()
+    }
+
+    // 读取正文：返回 &self 的借用，不复制。
+    fn body(&self) -> &str {
+        &self.body
+    }
+
+    // 追加正文：需要可变借用（&mut self）。
+    fn append(&mut self, text: &str) {
+        self.body.push_str(text);
+    }
+}
+
+fn main() {
+    let note = Note::new("今日计划".to_string(), "写代码".to_string());
+    note.append("，然后实测");
+    let t = note.title();
+    println!("标题：{}", t);
+    println!("正文：{}", note.body());
+}
+'''
+expect_output = '''标题：今日计划
+正文：写代码，然后实测'''
+source = "自编 (Boss 综合关：move+borrow+clone 三知识点，无原题)"
+is_boss = true
