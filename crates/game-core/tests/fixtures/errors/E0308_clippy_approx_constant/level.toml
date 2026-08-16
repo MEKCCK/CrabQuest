@@ -1,0 +1,31 @@
+# 方案 A 样例关：clippy lint 改写成等价编译错误（P2-16 §4）
+#
+# 裸 rustc 下 clippy lint 完全不触发（`let pi = 3.14;` 零输出、退出码 0，见
+# docs-review/L3-B2-parser.md §1.3 实测）→ 与当前「仅 std 裸 rustc」管线不兼容。
+# 方案 A：把 lint 违规改写成等价的编译错误，以编译错误关形式收录。本样例把
+# clippy `approx_constant` 风格（裸字面量 3.14）改写为 `let pi: i32 = 3.14;`
+# → rustc 实测发射 E0308（mismatched types，行 2）。
+#
+# 本文件即该样例关的关卡素材（tier=l4、allow_compile_fail=true、
+# expect_error_code=E0308）。当前未挂载到 assets/levels/（T4 契约只读 15 关）；
+# Tier 2 测试 tier2_plan_a_clippy_level_end_to_end 以完整 validate() 流程验证
+# 本关可用（broken starter 判定通过、fixed 代码判定「编译成功」失败）。
+# 后续落地到正式关卡目录时整体复制本文件 + errors/E0308_clippy_approx_constant/
+# 下的 broken.rs / fixed.rs 即可。
+
+[[level]]
+id = "l4-clippy-approx-constant"
+title = "精度与风格：近似常量"
+tier = "l4"
+description = "pi 的值被当作整型赋值，代码无法编译。让代码编译通过并输出 pi is 3.14。"
+hint = "3.14 是浮点数，需要浮点类型：let pi: f64 = 3.14;"
+starter_code = '''
+fn main() {
+    let pi: i32 = 3.14;
+    println!("pi is {}", pi);
+}
+'''
+expect_output = "pi is 3.14"
+allow_compile_fail = true
+expect_error_code = "E0308"
+source = "rlg-self (clippy approx_constant 改写样例)"
