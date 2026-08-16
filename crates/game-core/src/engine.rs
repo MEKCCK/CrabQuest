@@ -150,8 +150,7 @@ impl Engine {
             .entry(level.id.clone())
             .or_insert_with(|| LevelProgress {
                 state: LevelState::Unlocked,
-                attempts: 0,
-                completed_at: None,
+                ..LevelProgress::default()
             });
         entry.state = LevelState::Passed;
         entry.attempts += 1;
@@ -204,7 +203,7 @@ fn unix_secs() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::level::{parse_levels, LevelSet, LevelTier};
+    use crate::level::{parse_levels, LevelSet};
     use crate::save::{LevelState, SaveData};
     use crate::sandbox::DevSandbox;
     use crate::validate::mapper::ErrorMapper;
