@@ -54,18 +54,12 @@ impl Default for LevelProgress {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct BossProgress {
     #[serde(default)]
     pub defeated: bool,
     #[serde(default)]
     pub best_attempts: u32,
-}
-
-impl Default for BossProgress {
-    fn default() -> Self {
-        Self { defeated: false, best_attempts: 0 }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -316,20 +310,22 @@ attempts = 0
     fn v1_roundtrip_all_fields() {
         // ③ v1 roundtrip 全字段相等
         let p = temp_path("v1-roundtrip.toml");
-        let mut data = SaveData::default();
-        data.version = CURRENT_SAVE_VERSION;
-        data.player_name = "测试玩家".into();
-        data.xp = 120;
-        data.combo = 3;
-        data.max_combo = 5;
-        data.total_errors = 7;
-        data.hearts = 4;
-        data.streak_days = 3;
-        data.last_played_date = Some("2026-08-16".into());
-        data.completed_steps = ["l0-hello:pass"].into_iter().map(String::from).collect();
-        data.achievements = ["first_steps"].into_iter().map(String::from).collect();
-        data.practice_unlock_all = true;
-        data.victory_celebrated = true;
+        let mut data = SaveData {
+            version: CURRENT_SAVE_VERSION,
+            player_name: "测试玩家".into(),
+            xp: 120,
+            combo: 3,
+            max_combo: 5,
+            total_errors: 7,
+            hearts: 4,
+            streak_days: 3,
+            last_played_date: Some("2026-08-16".into()),
+            completed_steps: ["l0-hello:pass"].into_iter().map(String::from).collect(),
+            achievements: ["first_steps"].into_iter().map(String::from).collect(),
+            practice_unlock_all: true,
+            victory_celebrated: true,
+            ..SaveData::default()
+        };
         data.level_states.insert(
             "l0-hello".into(),
             LevelProgress {
@@ -384,8 +380,7 @@ attempts = 0
         // save() 写入前把旧档复制为 .bak，内容为旧档
         let p = temp_path("bak.toml");
         std::fs::write(&p, "xp = 1\n").unwrap();
-        let mut data = SaveData::default();
-        data.xp = 2;
+        let data = SaveData { xp: 2, ..SaveData::default() };
         save(&data, &p).unwrap();
         let bak = p.with_extension("toml.bak");
         assert!(bak.exists());
