@@ -1,0 +1,24 @@
+[[level]]
+id = "l4-drop-order"
+title = "挑战：Drop 释放顺序"
+tier = "l4"
+description = "写出代码，使输出依次为 end、drop 2、drop 1。涉及概念：Drop 与局部变量释放顺序。"
+hint = "局部变量在作用域结束时按声明逆序自动释放。"
+hints = [
+  "局部变量离开作用域时按声明逆序自动释放。",
+  "释放由 Drop trait 的 drop 方法控制。见 book-cn ch15-03「Drop trait 运行清理代码」：https://rustwiki.org/zh-CN/book/ch15-03-drop.html",
+  "struct D(u32);\nimpl Drop for D { fn drop(&mut self) { println!(\"drop {}\", self.0); } }\nlet _a = D(1); let _b = D(2);\n先建 D(1) 再建 D(2)，最后打印 end。",
+]
+starter_code = '''
+fn main() {
+    println!("drop 1");
+    println!("drop 2");
+    println!("end");
+}
+'''
+expect_output = '''
+end
+drop 2
+drop 1
+'''
+source = "rust-quiz (questions/012-binding-drop-behavior.rs, CC BY-SA 4.0，主题改编，解释自写)"

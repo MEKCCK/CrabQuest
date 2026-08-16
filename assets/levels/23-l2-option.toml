@@ -1,0 +1,23 @@
+[[level]]
+id = "l2-option"
+title = "Option 与 get"
+tier = "l2"
+description = "v.get(5) 越界返回无值，当前输出 none。目标输出 3。涉及概念：Option。"
+hint = "按位置取值可能取到值，也可能没有值（越界时）。"
+hints = [
+  "按位置取值可能取到值，也可能没有值（越界时）。",
+  "当前 get(5) 越界返回无值分支。见 book-cn ch08-01「使用 Vector 存储列表」：https://rustwiki.org/zh-CN/book/ch08-01-vectors.html",
+  "let item = v.get(2);\n把参数改为 2，越界消失并取到 3。",
+]
+starter_code = '''
+fn main() {
+    let v = vec![1, 2, 3];
+    let item = v.get(5);
+    match item {
+        Some(x) => println!("{}", x),
+        None => println!("none"),
+    }
+}
+'''
+expect_output = "3"
+source = "自编 (Option 与 get 练习，无原题)"

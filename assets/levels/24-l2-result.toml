@@ -1,0 +1,23 @@
+[[level]]
+id = "l2-result"
+title = "Result 与错误处理"
+tier = "l2"
+description = "parse_number 对无法解析的输入返回 Err，对失败结果直接取值会 panic。目标输出「解析失败」。涉及概念：Result 与错误处理。"
+hint = "可能失败的操作返回 Result，成功与失败两种结果都要处理。"
+hints = [
+  "可能失败的操作返回 Result，两种结果都需要处理。",
+  "错误在运行期：对 Err 直接取值触发 panic。见 book-cn ch09-02「可恢复的错误与 Result」：https://rustwiki.org/zh-CN/book/ch09-02-recoverable-errors-with-result.html",
+  "match result { Ok(n) => println!(\"{}\", n), Err(_) => println!(\"解析失败\") }\n用 match 分别处理成功与失败分支。",
+]
+starter_code = '''
+fn main() {
+    let result = parse_number("not a number");
+    println!("{}", result.unwrap());
+}
+
+fn parse_number(s: &str) -> Result<i32, std::num::ParseIntError> {
+    s.parse()
+}
+'''
+expect_output = "解析失败"
+source = "自编 (Result 错误处理练习，无原题)"
