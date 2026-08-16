@@ -4,6 +4,11 @@ title = "借用而不是移动"
 tier = "l1"
 description = "calculate_length 拿走了 s 的所有权，导致 main 里无法再使用 s。改为借用（引用）。"
 hint = "调用处传 &s，函数签名改为 fn calculate_length(s: &String) -> usize"
+hints = [
+  "编译错误 E0382：s 的值在调用 calculate_length(s) 时被移动。",
+  "main 里 println! 仍要使用 s，所以 calculate_length 只能借用不能拿走。",
+  "调用处传 &s，签名改为 fn calculate_length(s: &String) -> usize",
+]
 starter_code = '''
 fn main() {
     let s = String::from("hello");

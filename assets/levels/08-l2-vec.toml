@@ -4,6 +4,11 @@ title = "数组越界 panic"
 tier = "l2"
 description = "程序会 panic：下标 3 超出了 vec![1,2,3] 的范围。修复下标使输出为 3。"
 hint = "Vec 下标从 0 开始：vec[2] 是 3。"
+hints = [
+  "运行期 panic：index out of bounds: the len is 3 but the index is 3。",
+  "有效下标是 0..3，目标输出 3 是最后一个元素。",
+  "下标从 0 开始：vec[2] 是 3。",
+]
 starter_code = '''
 fn main() {
     let v = vec![1, 2, 3];
