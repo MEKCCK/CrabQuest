@@ -1,0 +1,17 @@
+[[level]]
+id = "l0-loop"
+title = "循环范围"
+tier = "l0"
+description = "当前循环计算 1+2+3+4=10，但要求输出 15（1 到 5 的和）。修改循环范围。"
+hint = "1..5 不含 5；使用 1..=5 表示包含端点。"
+starter_code = '''
+fn main() {
+    let mut sum = 0;
+    for i in 1..5 {
+        sum += i;
+    }
+    println!("{}", sum);
+}
+'''
+expect_output = "15"
+source = "rustlings (loops 系列)"

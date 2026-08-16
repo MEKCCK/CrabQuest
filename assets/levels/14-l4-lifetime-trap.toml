@@ -1,0 +1,18 @@
+[[level]]
+id = "l4-lifetime-trap"
+title = "挑战：借用的存活范围"
+tier = "l4"
+description = "修复代码：s 借用了一个在花括号内就释放的值。让 t 的存活范围覆盖 s 的使用。"
+hint = "把 let t = String::from(\"hi\"); 移到块外（在 let s 之前声明）。"
+starter_code = '''
+fn main() {
+    let s;
+    {
+        let t = String::from("hi");
+        s = &t;
+    }
+    println!("{}", s);
+}
+'''
+expect_output = "hi"
+source = "rust-quiz (生命周期主题)"
