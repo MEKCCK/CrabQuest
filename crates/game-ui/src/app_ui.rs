@@ -8,8 +8,14 @@ use game_core::ui::UiBackend;
 use game_core::validate::{ErrorCard, OutputDiff};
 use macroquad::prelude::*;
 
-/// JetBrains Maple Mono（内嵌，SIL OFL 许可）——覆盖 CJK 统一表意区，保证中文正常渲染
+/// JetBrains Maple Mono（内嵌，SIL OFL 许可）——覆盖 CJK 统一表意区，保证中文正常渲染；
+/// Monospace 家族主字体（代码区等宽），同时作为 Proportional 家族的 CJK 兜底。
 const MAPLE_FONT: &[u8] = include_bytes!("../assets/JetBrainsMapleMono-Regular.ttf");
+
+/// Noto Sans SC（SIL OFL 1.1；Google Fonts 官方源下载后由 pyftsubset 子集化到游戏用字，
+/// 约 300KB。来源 URL、许可全文与复现命令见 crates/game-ui/scripts/font_subset.py 与
+/// assets/NotoSansSC-OFL.txt）——Proportional 家族主字体（标题/描述/正文无衬线中文）。
+const NOTO_SANS_SC: &[u8] = include_bytes!("../assets/NotoSansSC-Regular.ttf");
 
 /// P3-19：编辑器 TextEdit 的持久化 id salt（光标状态跨帧/跨布局保持，
 /// 行号跳转先写 TextEditState 再绘制，焦点行才能落在目标行首）
@@ -17,18 +23,33 @@ const EDITOR_ID_SALT: &str = "code_editor";
 /// P3-19：编辑器滚动区限高（与反馈面板 max_height 一致；短代码自动收缩）
 const EDITOR_MAX_HEIGHT: f32 = 420.0;
 
-/// 把中文字体安装进 egui 字体系统：插入 Proportional / Monospace 家族首位，
-/// 中文与拉丁字符都用它渲染，缺失字形（如部分 emoji）回退到 egui 默认字体。
+/// P3-20 双字体方案：
+/// - Proportional = [noto_sans_sc, jetbrains_maple_mono, egui 默认]——标题/描述/正文用
+///   无衬线 Noto Sans SC，maple 兜底 CJK（其全量表意区覆盖防 Noto 子集缺字）；
+/// - Monospace = [jetbrains_maple_mono, egui 默认]——代码区保持等宽（不变）。
 fn install_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert(
+        "noto_sans_sc".to_owned(),
+        std::sync::Arc::new(egui::FontData::from_static(NOTO_SANS_SC)),
+    );
     fonts.font_data.insert(
         "jetbrains_maple_mono".to_owned(),
         std::sync::Arc::new(egui::FontData::from_static(MAPLE_FONT)),
     );
-    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-        let list = fonts.families.entry(family).or_default();
-        list.insert(0, "jetbrains_maple_mono".to_owned());
+    {
+        let proportional = fonts
+            .families
+            .entry(egui::FontFamily::Proportional)
+            .or_default();
+        proportional.insert(0, "noto_sans_sc".to_owned());
+        proportional.insert(1, "jetbrains_maple_mono".to_owned());
     }
+    fonts
+        .families
+        .entry(egui::FontFamily::Monospace)
+        .or_default()
+        .insert(0, "jetbrains_maple_mono".to_owned());
     ctx.set_fonts(fonts);
 }
 
@@ -977,6 +998,33 @@ mod tests {
         });
         assert!(ui.code_buf.contains("fn main"), "code_buf 未同步: {}", ui.code_buf);
         assert!(matches!(app.screen(), Screen::Level(_)));
+    }
+
+    /// P3-20：双字体安装不破坏无头环境——Proportional 用 Noto Sans SC 渲染中文正文，
+    /// Monospace 保持 maple（等宽 + CJK 覆盖），弱提示在装字体后仍正常排版。
+    #[test]
+    fn install_fonts_dual_family_headless() {
+        let ctx = egui::Context::default();
+        // egui 字体系统需先跑一帧初始化（Context::run 前无字体可用）；set_fonts 在下一 pass 生效
+        let _ = ctx.run(egui::RawInput::default(), |_| {});
+        install_fonts(&ctx);
+        let _ = ctx.run(egui::RawInput::default(), |_| {}); // 应用新字体定义
+        let prop_ok = ctx.fonts(|f| f.has_glyphs(&egui::FontId::proportional(16.0), "你好，变量"));
+        let mono_ok = ctx.fonts(|f| f.has_glyphs(&egui::FontId::monospace(16.0), "let x = 5; fn main"));
+        assert!(prop_ok, "Proportional 应能用 Noto Sans SC 渲染中文正文");
+        assert!(mono_ok, "Monospace 应能用 maple 渲染代码");
+        // 装字体后照常绘制关卡，弱提示文本不丢
+        let mut app = test_app();
+        let mut ui = GameUi::new();
+        app.handle(Input::Enter).unwrap(); // 进入关卡
+        let out = ctx.run(egui::RawInput::default(), |ctx| {
+            ui.draw(ctx, &mut app);
+        });
+        assert!(ui.ime_hint_shown);
+        assert!(
+            shapes_contain_text(&out.shapes, "复制粘贴"),
+            "装字体后首次进入编辑器仍应显示「中文请复制粘贴」提示"
+        );
     }
 
     // ===== P2-08/09：hearts / streak（headless）=====
