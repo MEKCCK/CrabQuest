@@ -1,0 +1,79 @@
+[E0004]
+zh = "match 分支不穷尽：没有覆盖所有可能的情况（缺少通配符 _ 分支）"
+link = "https://doc.rust-lang.org/error_codes/E0004.html"
+
+[E0061]
+zh = "函数参数数量不匹配：调用时传入的参数个数与定义不符"
+link = "https://doc.rust-lang.org/error_codes/E0061.html"
+
+[E0106]
+zh = "缺少生命周期标注：引用类型需要显式标注生命周期（如 <'a>）"
+link = "https://doc.rust-lang.org/error_codes/E0106.html"
+
+[E0204]
+zh = "类型未实现 Copy：不能对含堆数据（如 String、Vec）的类型派生 Copy"
+link = "https://doc.rust-lang.org/error_codes/E0204.html"
+
+[E0277]
+zh = "trait 约束未满足：某个类型没有实现所需的 trait（如 Display、Clone）"
+link = "https://doc.rust-lang.org/error_codes/E0277.html"
+
+[E0308]
+zh = "类型不匹配：表达式的实际类型与期望类型不一致"
+link = "https://doc.rust-lang.org/error_codes/E0308.html"
+
+[E0369]
+zh = "二元运算（如 +、-）不能用于这两个类型：需要实现对应运算符的 trait"
+link = "https://doc.rust-lang.org/error_codes/E0369.html"
+
+[E0382]
+zh = "使用了已移动的值：所有权已转移，无法再使用原变量（可 clone 或借用）"
+link = "https://doc.rust-lang.org/error_codes/E0382.html"
+
+[E0412]
+zh = "找不到该类型：类型名未定义或未导入"
+link = "https://doc.rust-lang.org/error_codes/E0412.html"
+
+[E0425]
+zh = "找不到该变量/函数：名字未定义或不在当前作用域"
+link = "https://doc.rust-lang.org/error_codes/E0425.html"
+
+[E0433]
+zh = "路径解析失败：引用了不存在的模块或 crate"
+link = "https://doc.rust-lang.org/error_codes/E0433.html"
+
+[E0499]
+zh = "同一作用域内多次可变借用：一个变量同时只能有一个可变借用"
+link = "https://doc.rust-lang.org/error_codes/E0499.html"
+
+[E0502]
+zh = "借用冲突：变量同时存在不可变借用与可变借用，Rust 不允许"
+link = "https://doc.rust-lang.org/error_codes/E0502.html"
+
+[E0505]
+zh = "值被借用时不能移动：有活跃借用的情况下尝试 move 所有权"
+link = "https://doc.rust-lang.org/error_codes/E0505.html"
+
+[E0507]
+zh = "不能移出借用的内容：无法从借用中 move 走所有权"
+link = "https://doc.rust-lang.org/error_codes/E0507.html"
+
+[E0596]
+zh = "无法以可变方式借用：变量（或参数）需要声明为 mut"
+link = "https://doc.rust-lang.org/error_codes/E0596.html"
+
+[E0597]
+zh = "借用活得不够久：被借用的值比引用先被释放（生命周期问题）"
+link = "https://doc.rust-lang.org/error_codes/E0597.html"
+
+[E0599]
+zh = "没有该方法：类型上不存在这个方法的实现（或未实现对应 trait）"
+link = "https://doc.rust-lang.org/error_codes/E0599.html"
+
+[E0618]
+zh = "把不可调用的值当函数调用：该值不是函数"
+link = "https://doc.rust-lang.org/error_codes/E0618.html"
+
+[E0623]
+zh = "生命周期不一致：函数签名中两个引用的生命周期无法统一"
+link = "https://doc.rust-lang.org/error_codes/E0623.html"

@@ -1,0 +1,14 @@
+[[level]]
+id = "l2-vec"
+title = "数组越界 panic"
+tier = "l2"
+description = "程序会 panic：下标 3 超出了 vec![1,2,3] 的范围。修复下标使输出为 3。"
+hint = "Vec 下标从 0 开始：vec[2] 是 3。"
+starter_code = '''
+fn main() {
+    let v = vec![1, 2, 3];
+    println!("{}", v[3]);
+}
+'''
+expect_output = "3"
+source = "rustlings (vecs 系列)"

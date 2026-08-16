@@ -1,0 +1,13 @@
+[[level]]
+id = "l0-print"
+title = "格式化输出"
+tier = "l0"
+description = "println! 的占位符 {} 需要对应数量的参数。补上缺失的参数。"
+hint = "三个 {} 需要三个参数，当前只传了两个。"
+starter_code = '''
+fn main() {
+    println!("{} + {} = {}", 1, 2);
+}
+'''
+expect_output = "1 + 2 = 3"
+source = "rustlings (print 系列)"
