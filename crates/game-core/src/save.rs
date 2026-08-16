@@ -25,8 +25,12 @@ pub enum LevelState {
 pub struct LevelProgress {
     #[serde(default)]
     pub state: LevelState,
+    /// 总提交次数（Pass + Fail 都累加，v3 §7.5 尝试配额判定依据）
     #[serde(default)]
     pub attempts: u32,
+    /// 失败提交次数（仅 Fail 分支累加）。完美判定：首次通过时 == 0（v3 §7.2）
+    #[serde(default)]
+    pub fail_count: u32,
     #[serde(default)]
     pub completed_at: Option<String>,
     /// 单次通关最快用时（毫秒），engine.submit 通过分支记录
@@ -42,6 +46,7 @@ impl Default for LevelProgress {
         Self {
             state: LevelState::Locked,
             attempts: 0,
+            fail_count: 0,
             completed_at: None,
             best_time_ms: None,
             hints_used: Vec::new(),
@@ -120,6 +125,14 @@ impl Default for SaveData {
             level_states: HashMap::new(),
             boss_states: HashMap::new(),
         }
+    }
+}
+
+impl SaveData {
+    /// 已通关关卡数（level_states 中 state==Passed 的数量），rank 判定依据（v3 §7.3）。
+    /// 纯函数、无新存档字段：由现有 level_states 推导。
+    pub fn completed_count(&self) -> usize {
+        self.level_states.values().filter(|p| p.state == LevelState::Passed).count()
     }
 }
 
@@ -239,6 +252,16 @@ attempts = 0
 "#;
 
     #[test]
+    fn completed_count_counts_passed_levels() {
+        let mut data = SaveData::default();
+        assert_eq!(data.completed_count(), 0);
+        data.level_states.insert("l0-hello".into(), LevelProgress { state: LevelState::Passed, ..LevelProgress::default() });
+        data.level_states.insert("l1-move".into(), LevelProgress { state: LevelState::Unlocked, ..LevelProgress::default() });
+        data.level_states.insert("l2-vec".into(), LevelProgress::default());
+        assert_eq!(data.completed_count(), 1);
+    }
+
+    #[test]
     fn default_when_missing() {
         let p = temp_path("missing.toml");
         let _ = std::fs::remove_file(&p);
@@ -312,6 +335,7 @@ attempts = 0
             LevelProgress {
                 state: LevelState::Passed,
                 attempts: 2,
+                fail_count: 1,
                 completed_at: Some("1720000000".into()),
                 best_time_ms: Some(42000),
                 hints_used: vec![0, 1],

@@ -5,7 +5,58 @@ use crate::save::{LevelProgress, LevelState, SaveData};
 use crate::validate::mapper::ErrorMapper;
 use crate::validate::{validate, Validation};
 
-pub const XP_PER_PASS: u32 = 20;
+/// XP 定价表（v3 §7.2，替换旧 XP_PER_PASS=20）：
+/// 首次通关（普通关）+25；完美通关（fail_count==0）+10；连击加成（通过后 combo>=3）+5；
+/// Boss 首通 ≤4 次尝试 +50；Boss 首通 >4 次尝试 +30。重复通关 +0（combo 仍更新）。
+/// 单关上限：普通 25+10+5=40；Boss 50+10+5=65。
+pub const XP_PASS: u32 = 25;
+pub const XP_PERFECT: u32 = 10;
+pub const XP_COMBO: u32 = 5;
+pub const XP_BOSS: u32 = 50;
+pub const XP_BOSS_FALLBACK: u32 = 30;
+
+/// XP 一次制分档纯函数（v3 §7.2）：四步累加，重复通关一律 +0。
+///
+/// - `is_first_pass`：`completed_steps` 无 `"{level_id}:pass"` 记录；
+/// - `is_boss`：Boss 关替换 base 档位（≤4 次尝试 +50 / >4 次尝试 +30）；
+/// - `fail_count`：该关失败提交次数，==0 且首通 → 完美 +10；
+/// - `combo_after_pass`：通过后 combo 值（v3「通过后 combo ≥ 3」→ 取累加后值）；
+/// - `attempts_at_pass`：通关时该关累计提交次数（含本次通过，总提交数 = fail + 通过）。
+///
+/// 返回本次应得 XP（已钳制单关上限：普通 40 / Boss 65）。
+pub fn award_xp(
+    is_first_pass: bool,
+    is_boss: bool,
+    fail_count: u32,
+    combo_after_pass: u32,
+    attempts_at_pass: u32,
+) -> u32 {
+    if !is_first_pass {
+        return 0;
+    }
+    let mut xp = if is_boss {
+        if attempts_at_pass <= 4 {
+            XP_BOSS
+        } else {
+            XP_BOSS_FALLBACK
+        }
+    } else {
+        XP_PASS
+    };
+    if fail_count == 0 {
+        xp += XP_PERFECT;
+    }
+    if combo_after_pass >= 3 {
+        xp += XP_COMBO;
+    }
+    // 单关上限保险钳制（当前定价天然不越界，防止未来新增加成越限）
+    let cap = if is_boss {
+        XP_BOSS + XP_PERFECT + XP_COMBO
+    } else {
+        XP_PASS + XP_PERFECT + XP_COMBO
+    };
+    xp.min(cap)
+}
 
 pub struct Engine {
     pub level_set: LevelSet,
@@ -81,9 +132,11 @@ impl Engine {
 
         let result = validate(&level, code, &self.mapper, self.sandbox.as_ref())?;
 
+        let mut xp_gained = 0;
         match &result {
-            Validation::Pass => {
-                self.save.xp += XP_PER_PASS;
+            Validation::Pass { .. } => {
+                let pass_key = format!("{}:pass", level.id);
+                let first_pass = !self.save.completed_steps.contains(&pass_key);
                 self.save.combo += 1;
                 self.save.max_combo = self.save.max_combo.max(self.save.combo);
                 let entry = self
@@ -97,6 +150,18 @@ impl Engine {
                 entry.state = LevelState::Passed;
                 entry.attempts += 1;
                 entry.completed_at = Some(unix_secs());
+                // XP 一次制分档：实际奖励随 Validation::Pass 返回（v3 §7.2）
+                xp_gained = award_xp(
+                    first_pass,
+                    level.is_boss,
+                    entry.fail_count,
+                    self.save.combo, // 通过后 combo（v3「通过后 combo ≥ 3」）
+                    entry.attempts,  // 通关时累计提交次数（含本次通过）
+                );
+                self.save.xp += xp_gained;
+                if first_pass {
+                    self.save.completed_steps.insert(pass_key);
+                }
                 if let Some(next) = self.level_set.levels.get(idx + 1) {
                     let n = self
                         .save
@@ -117,9 +182,13 @@ impl Engine {
                     .entry(level.id.clone())
                     .or_insert_with(LevelProgress::default);
                 entry.attempts += 1;
+                entry.fail_count += 1;
             }
         }
-        Ok(result)
+        Ok(match result {
+            Validation::Pass { .. } => Validation::Pass { xp_gained },
+            other => other,
+        })
     }
 
     pub fn current_level(&self) -> Option<&Level> {
@@ -146,7 +215,7 @@ fn unix_secs() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::level::{parse_levels, LevelSet, LevelTier};
+    use crate::level::{parse_levels, LevelSet};
     use crate::save::{LevelState, SaveData};
     use crate::sandbox::DevSandbox;
     use crate::validate::mapper::ErrorMapper;
@@ -198,8 +267,9 @@ source = "rustlings"
         e.new_game();
         e.start_level(0).unwrap();
         let code = "fn main() { println!(\"x has the value {}\", 5); }";
-        assert_eq!(e.submit(code).unwrap(), Validation::Pass);
-        assert_eq!(e.save.xp, XP_PER_PASS);
+        // 首通 + 完美（首次提交即通过）→ 25 + 10 = 35
+        assert_eq!(e.submit(code).unwrap(), Validation::Pass { xp_gained: XP_PASS + XP_PERFECT });
+        assert_eq!(e.save.xp, XP_PASS + XP_PERFECT);
         assert_eq!(e.save.combo, 1);
         assert_eq!(e.save.level_states.get("l0-hello").unwrap().state, LevelState::Passed);
         assert_eq!(e.save.level_states.get("l1-move").unwrap().state, LevelState::Unlocked);
@@ -238,7 +308,7 @@ source = "rustlings"
         e.new_game();
         e.start_level(0).unwrap();
         let code = "fn main() { let s = String::from(\"hi\"); let t = s; println!(\"{}\", s); }";
-        assert_eq!(e.submit(code).unwrap(), Validation::Pass);
+        assert!(matches!(e.submit(code).unwrap(), Validation::Pass { .. }));
     }
 
     #[test]
@@ -250,5 +320,145 @@ source = "rustlings"
         e.start_level(0).unwrap();
         e.submit("fn main() { println!(\"x has the value {}\", 5); }").unwrap();
         assert!(e.can_continue());
+    }
+
+    // ---- P1-05：XP 一次制分档 + rank（v3 §7.2/§7.3）----
+
+    fn boss_engine() -> Engine {
+        let set = LevelSet {
+            levels: parse_levels(
+                "[[level]]\nid = \"boss\"\ntitle = \"boss\"\ntier = \"l4\"\ndescription = \"d\"\nstarter_code = \"\"\nis_boss = true\nexpect_output = \"ok\"\nsource = \"rust-quiz\"\n",
+            )
+            .unwrap(),
+        };
+        Engine::new(set, SaveData::default(), ErrorMapper::default_fallback(), Box::new(DevSandbox::new()))
+    }
+
+    #[test]
+    fn first_pass_awards_25_base() {
+        // 首次通关：+25 base（无 perfect/combo 时）
+        assert_eq!(award_xp(true, false, 1, 1, 2), XP_PASS);
+        assert_eq!(award_xp(true, false, 1, 2, 2), XP_PASS);
+    }
+
+    #[test]
+    fn repeat_pass_awards_zero_but_combo_still_updates() {
+        let mut e = engine();
+        e.new_game();
+        e.start_level(0).unwrap();
+        let code = "fn main() { println!(\"x has the value {}\", 5); }";
+        assert_eq!(e.submit(code).unwrap(), Validation::Pass { xp_gained: XP_PASS + XP_PERFECT });
+        assert_eq!(e.save.xp, XP_PASS + XP_PERFECT);
+        assert!(e.save.completed_steps.contains("l0-hello:pass"));
+        // 重复通关同一关：+0 XP，combo 仍更新（练习价值保留）
+        assert_eq!(e.submit(code).unwrap(), Validation::Pass { xp_gained: 0 });
+        assert_eq!(e.save.xp, XP_PASS + XP_PERFECT);
+        assert_eq!(e.save.combo, 2);
+        assert_eq!(e.save.level_states.get("l0-hello").unwrap().attempts, 2);
+    }
+
+    #[test]
+    fn perfect_pass_awards_10() {
+        // 完美通关（首次提交即通过，fail_count == 0）：+10
+        assert_eq!(award_xp(true, false, 0, 1, 1), XP_PASS + XP_PERFECT);
+        // 失败过再通过：无 perfect
+        assert_eq!(award_xp(true, false, 1, 1, 2), XP_PASS);
+    }
+
+    #[test]
+    fn combo_3_or_more_awards_5() {
+        // 连击加成：首通且通过后 combo >= 3 → +5（v3「通过后 combo ≥ 3」，取累加后值）
+        assert_eq!(award_xp(true, false, 1, 3, 3), XP_PASS + XP_COMBO);
+        assert_eq!(award_xp(true, false, 0, 3, 1), XP_PASS + XP_PERFECT + XP_COMBO);
+        // combo 2 时无加成
+        assert_eq!(award_xp(true, false, 0, 2, 1), XP_PASS + XP_PERFECT);
+    }
+
+    #[test]
+    fn single_level_cap_normal_40() {
+        // 普通关单关上限 40 = 25 + 10 + 5（全加成可叠加且不越上限）
+        let gained = award_xp(true, false, 0, 3, 1);
+        assert_eq!(gained, XP_PASS + XP_PERFECT + XP_COMBO);
+        assert_eq!(gained, 40);
+    }
+
+    #[test]
+    fn boss_first_pass_4_attempts_50() {
+        // Boss 首通 ≤4 次尝试 → +50（替换 base；perfect/combo 照常叠加）
+        assert_eq!(award_xp(true, true, 3, 1, 4), XP_BOSS);
+        assert_eq!(award_xp(true, true, 0, 3, 1), XP_BOSS + XP_PERFECT + XP_COMBO);
+        // Boss 单关上限 65 = 50 + 10 + 5
+        assert_eq!(XP_BOSS + XP_PERFECT + XP_COMBO, 65);
+    }
+
+    #[test]
+    fn boss_first_pass_over_4_attempts_30() {
+        // Boss 首通 >4 次尝试 → +30 惩罚档
+        assert_eq!(award_xp(true, true, 4, 1, 5), XP_BOSS_FALLBACK);
+    }
+
+    #[test]
+    fn boss_level_attempts_drive_tier_via_submit() {
+        // 集成：4 次提交（3 败 1 过）→ +50；5 次提交（4 败 1 过）→ +30
+        let mut e = boss_engine();
+        e.new_game();
+        e.start_level(0).unwrap();
+        let bad = "fn main() { println!(\"wrong\"); }";
+        for _ in 0..3 {
+            e.submit(bad).unwrap();
+        }
+        assert_eq!(e.submit("fn main() { println!(\"ok\"); }").unwrap(), Validation::Pass { xp_gained: XP_BOSS });
+        let p = e.save.level_states.get("boss").unwrap();
+        assert_eq!(p.fail_count, 3);
+        assert_eq!(p.attempts, 4);
+
+        let mut e2 = boss_engine();
+        e2.new_game();
+        e2.start_level(0).unwrap();
+        for _ in 0..4 {
+            e2.submit(bad).unwrap();
+        }
+        assert_eq!(e2.submit("fn main() { println!(\"ok\"); }").unwrap(), Validation::Pass { xp_gained: XP_BOSS_FALLBACK });
+        let p = e2.save.level_states.get("boss").unwrap();
+        assert_eq!(p.fail_count, 4);
+        assert_eq!(p.attempts, 5);
+        assert_eq!(e2.save.xp, XP_BOSS_FALLBACK);
+    }
+
+    #[test]
+    fn fail_increments_fail_count_attempts_is_total() {
+        let mut e = engine();
+        e.new_game();
+        e.start_level(0).unwrap();
+        let bad = "fn main() { println!(\"wrong\"); }";
+        e.submit(bad).unwrap();
+        e.submit(bad).unwrap();
+        let p = e.save.level_states.get("l0-hello").unwrap();
+        assert_eq!(p.fail_count, 2);
+        assert_eq!(p.attempts, 2);
+        // 通过：attempts 含本次（3），fail_count 保持 2 → 无 perfect、combo 1 < 3 无连击
+        let code = "fn main() { println!(\"x has the value {}\", 5); }";
+        assert_eq!(e.submit(code).unwrap(), Validation::Pass { xp_gained: XP_PASS });
+        let p = e.save.level_states.get("l0-hello").unwrap();
+        assert_eq!(p.fail_count, 2);
+        assert_eq!(p.attempts, 3);
+        assert_eq!(e.save.xp, XP_PASS);
+    }
+
+    #[test]
+    fn rank_does_not_unlock_levels() {
+        // rank 只解锁元内容：关卡线性解锁链不受 rank 影响（v3 §7.3）
+        let mut e = engine();
+        e.new_game();
+        // 伪造 R10 存档：15 关 Passed
+        for i in 0..15 {
+            let id = format!("fake{i}");
+            e.save
+                .level_states
+                .insert(id, LevelProgress { state: LevelState::Passed, ..LevelProgress::default() });
+        }
+        assert_eq!(crate::rank::rank_for(e.save.completed_count()).level, 10);
+        // l1-move 仍 Locked → 拒绝进入（解锁只看 level_states.state）
+        assert!(matches!(e.start_level(1), Err(GameError::LevelLocked(_))));
     }
 }
