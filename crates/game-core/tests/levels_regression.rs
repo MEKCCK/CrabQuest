@@ -1,15 +1,17 @@
-//! Tier 3：关卡回归（P2-16 §3）——33 关 starter 编译断言 + 01-l0-print 反馈非空锁。
+//! Tier 3：关卡回归（P2-16 §3）——55 关 starter 编译断言 + 01-l0-print 反馈非空锁。
 //!
 //! 从 `assets/levels/*.toml` **动态读取** starter_code（不复制代码进测试，防素材
 //! 漂移；T3 中文字面量修订也不影响），用 DevSandbox 真实编译，断言每关 starter 的
 //! 期望画像：首条错误码（rustc 输出顺序，L3-B2 §1.1）/ 编译成功 / 编译成功+运行
 //! panic 分类。期望表源自 docs-review/L3-B2-parser.md §3 的 15 fixture 实测
-//! （rustc 1.97）；**不锁行号**（素材微调会漂），只锁错误码与运行行为。
+//! （rustc 1.97）+ 各 verification-*.md 实测；**不锁行号**（素材微调会漂），只锁
+//! 错误码与运行行为。
 //!
 //! 01-l0-print 单独经 `validate()` 全流程断言反馈非空（锁死空反馈 bug，P1-01 /
 //! L3-B2 §1.5：format 参数错误无 E 码，解析器必须产出 EUNKNOWN）。
 //!
-//! 本文件为默认运行的回归测试（非 #[ignore]）；成本 ≈ 15 次编译 + 2 次运行 ≈ 7s。
+//! 本文件为默认运行的回归测试（非 #[ignore]）；成本 ≈ 55 次编译 + 数次运行
+//! ≈ 15-60s（Tier3 全量画像，属正常耗时）。
 
 mod common;
 use common::*;
@@ -34,8 +36,8 @@ enum StarterExpect {
 }
 
 /// 期望表：按关卡 id 推导自 L3-B2 §3 的 fixture 实测（15 存量关 × rustc 1.97）+ 各
-/// verification-*.md 实测（新增 18 关：T3 rustlings / T4 100ex+rust-quiz / T5 quiz / T6
-/// expect_panic）。新增关卡必须在此补充条目，否则 `expect_for` panic（防静默漏测）。
+/// verification-*.md 实测（新增 40 关：T3 rustlings / T4 100ex+rust-quiz / T5 quiz / T6
+/// expect_panic / T7 22 关）。新增关卡必须在此补充条目，否则 `expect_for` panic（防静默漏测）。
 fn expect_for(id: &str) -> StarterExpect {
     match id {
         // 00-l0-hello：x 未声明 → E0425（F1）
@@ -106,6 +108,51 @@ fn expect_for(id: &str) -> StarterExpect {
         "l3-lifetime3" => StarterExpect::CompileFail { code: "E0106" },
         // 37-l3-lifetime1：missing lifetime specifier → E0106（rustlings 实测）
         "l3-lifetime1" => StarterExpect::CompileFail { code: "E0106" },
+        // ---- 以下为 T7（P4-25 Wave 3a）新增 22 关（L0 5 + L1 5 + L2 4 + L3 7 + L4 1，verification-T7-*.md 实测）----
+        // 05-l0-variables2：let x; 无初始值，类型无法推断 → E0283（verification-T7-l0.md 实测）
+        "l0-variables2" => StarterExpect::CompileFail { code: "E0283" },
+        // 06-l0-if：函数体为空返回 ()，期望 i32 → E0308（T7-l0 实测）
+        "l0-if" => StarterExpect::CompileFail { code: "E0308" },
+        // 07-l0-primitives：is_evening 未定义 → E0425（T7-l0 实测）
+        "l0-primitives" => StarterExpect::CompileFail { code: "E0425" },
+        // 08-l0-functions2：call_me 缺实参 → E0061（T7-l0 实测）
+        "l0-functions2" => StarterExpect::CompileFail { code: "E0061" },
+        // 09-l0-boss：total 未定义 → E0425（T7-l0 实测；is_boss=false 普通综合关）
+        "l0-boss" => StarterExpect::CompileFail { code: "E0425" },
+        // 16-l1-strings：函数体返回 &str，签名要求 String → E0308（T7-l1 实测）
+        "l1-strings" => StarterExpect::CompileFail { code: "E0308" },
+        // 17-l1-structs：初始化缺 blue 字段 → E0063（T7-l1 实测）
+        "l1-structs" => StarterExpect::CompileFail { code: "E0063" },
+        // 18-l1-options1：函数体空返回 ()，要求 Option<u16> → E0308（T7-l1 实测）
+        "l1-options1" => StarterExpect::CompileFail { code: "E0308" },
+        // 19-l1-enums：找不到 Resize 变体 → E0599（T7-l1 实测）
+        "l1-enums" => StarterExpect::CompileFail { code: "E0599" },
+        // 21-l1-boss：note 未声明 mut 却可变借用 → E0596（T7-l1 实测）
+        "l1-boss" => StarterExpect::CompileFail { code: "E0596" },
+        // 30-l2-hashmap：basket 未定义 → E0425（T7-l2 实测）
+        "l2-hashmap" => StarterExpect::CompileFail { code: "E0425" },
+        // 31-l2-strings2：String 传入 &str 形参 → E0308（T7-l2 实测）
+        "l2-strings2" => StarterExpect::CompileFail { code: "E0308" },
+        // 32-l2-match：match 未覆盖 West 分支 → E0004（T7-l2 实测）
+        "l2-match" => StarterExpect::CompileFail { code: "E0004" },
+        // 33-l2-boss：match None 分支返回 &str，期望 u32 → E0308（T7-l2 实测）
+        "l2-boss" => StarterExpect::CompileFail { code: "E0308" },
+        // 38-l3-generics：Vec 元素类型无法推断 → E0282（T7-l3 实测）
+        "l3-generics" => StarterExpect::CompileFail { code: "E0282" },
+        // 39-l3-traits1：impl 缺 append_bar 方法 → E0046（T7-l3 实测）
+        "l3-traits1" => StarterExpect::CompileFail { code: "E0046" },
+        // 40-l3-iterators：空函数体返回 ()，要求 u64 → E0308（T7-l3 实测）
+        "l3-iterators" => StarterExpect::CompileFail { code: "E0308" },
+        // 41-l3-iterators2：返回 Map 迭代器与 Vec<String> 不符 → E0308（T7-l3 实测）
+        "l3-iterators2" => StarterExpect::CompileFail { code: "E0308" },
+        // 42-l3-conversions：f64 与 usize 不能相除 → E0277（T7-l3 实测）
+        "l3-conversions" => StarterExpect::CompileFail { code: "E0277" },
+        // 43-l3-enums3：逻辑修复关，broken 编译通过（process 方法体为空，输出全部初始状态）
+        "l3-enums3" => StarterExpect::Compiles,
+        // 44-l3-boss：Item<T> 的 name 字段缺生命周期标注 → E0106（T7-l3 实测）
+        "l3-boss" => StarterExpect::CompileFail { code: "E0106" },
+        // 53-l4-boss：add 接收 &self 却 push 可变 → E0596（T7-l4 实测）
+        "l4-boss" => StarterExpect::CompileFail { code: "E0596" },
         other => panic!("期望表未覆盖关卡 {other}：新增关卡必须补充期望画像"),
     }
 }
@@ -161,14 +208,14 @@ fn check_level(lv: &game_core::level::Level, sb: &DevSandbox) -> Result<(), Stri
     }
 }
 
-/// Tier 3 主断言：33 关 starter 编译画像（错误码 / 编译成功 / panic 分类）。
+/// Tier 3 主断言：55 关 starter 编译画像（错误码 / 编译成功 / panic 分类）。
 #[test]
 fn tier3_levels_starter_error_codes() {
     let set = LevelSet::load(&assets_levels_dir()).expect("加载 assets/levels 失败");
     assert_eq!(
         set.len(),
-        33,
-        "关卡数应为 33（15 存量 + T3 8 + T4 8 + T5 quiz 1 + T6 expect_panic 1；新增关卡必须同步更新 expect_for 期望表）"
+        55,
+        "关卡数应为 55（15 存量 + T3 8 + T4 8 + T5 quiz 1 + T6 expect_panic 1 + T7 22；新增关卡必须同步更新 expect_for 期望表）"
     );
     let sb = DevSandbox::new();
     let mut failures: Vec<String> = Vec::new();

@@ -2,9 +2,17 @@
 zh = "match 分支不穷尽：没有覆盖所有可能的情况（缺少通配符 _ 分支）"
 link = "https://doc.rust-lang.org/error_codes/E0004.html"
 
+[E0046]
+zh = "trait 方法未实现：impl 块缺少 trait 声明的必需方法"
+link = "https://doc.rust-lang.org/error_codes/E0046.html"
+
 [E0061]
 zh = "函数参数数量不匹配：调用时传入的参数个数与定义不符"
 link = "https://doc.rust-lang.org/error_codes/E0061.html"
+
+[E0063]
+zh = "结构体初始化缺少字段：实例化时必须为所有字段提供初始值"
+link = "https://doc.rust-lang.org/error_codes/E0063.html"
 
 [E0106]
 zh = "缺少生命周期标注：引用类型需要显式标注生命周期（如 <'a>）"
@@ -17,6 +25,14 @@ link = "https://doc.rust-lang.org/error_codes/E0204.html"
 [E0277]
 zh = "trait 约束未满足：某个类型没有实现所需的 trait（如 Display、Clone）"
 link = "https://doc.rust-lang.org/error_codes/E0277.html"
+
+[E0282]
+zh = "类型推断失败：编译器无法确定变量类型，需要显式类型标注"
+link = "https://doc.rust-lang.org/error_codes/E0282.html"
+
+[E0283]
+zh = "类型推断歧义：类型参数无法唯一确定，需要显式类型标注"
+link = "https://doc.rust-lang.org/error_codes/E0283.html"
 
 [E0308]
 zh = "类型不匹配：表达式的实际类型与期望类型不一致"
@@ -77,3 +93,7 @@ link = "https://doc.rust-lang.org/error_codes/E0618.html"
 [E0623]
 zh = "生命周期不一致：函数签名中两个引用的生命周期无法统一"
 link = "https://doc.rust-lang.org/error_codes/E0623.html"
+
+[E0794]
+zh = "晚绑定生命周期参数存在时，不能显式指定生命周期实参"
+link = "https://doc.rust-lang.org/error_codes/E0794.html"
