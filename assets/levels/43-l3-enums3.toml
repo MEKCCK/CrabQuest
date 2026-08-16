@@ -1,0 +1,59 @@
+[[level]]
+id = "l3-enums3"
+title = "枚举：match 处理消息"
+tier = "l3"
+description = "process 方法体为空，收到消息后状态不更新，输出错误。目标输出四行状态：Move to (1, 2)、Echo 内容、颜色与 Quit。涉及概念：枚举与 match。"
+hint = "用 match 处理每个消息变体。"
+hints = [
+  "枚举的每个变体都要在 match 中处理。",
+  "match 需穷尽 Message 的全部变体，逐个更新对应状态。见 book-cn ch06-01「定义枚举」：https://rustwiki.org/zh-CN/book/ch06-01-defining-an-enum.html",
+  "Message::Move(p) => self.position = p,\nMessage::Echo(s) => self.message = s,\n每个变体一个分支，更新对应状态字段。",
+]
+starter_code = '''
+struct Point {
+    x: u64,
+    y: u64,
+}
+
+enum Message {
+    Move(Point),
+    Echo(String),
+    ChangeColor(u8, u8, u8),
+    Quit,
+}
+
+struct State {
+    position: Point,
+    message: String,
+    color: (u8, u8, u8),
+    quit: bool,
+}
+
+impl State {
+    fn process(&mut self, message: Message) {
+        // TODO: 用 match 按消息变体更新对应状态。
+    }
+}
+
+fn main() {
+    let mut state = State {
+        position: Point { x: 0, y: 0 },
+        message: String::new(),
+        color: (0, 0, 0),
+        quit: false,
+    };
+    state.process(Message::Move(Point { x: 1, y: 2 }));
+    state.process(Message::Echo(String::from("Hello world!")));
+    state.process(Message::ChangeColor(255, 0, 255));
+    state.process(Message::Quit);
+    println!("Move to ({}, {})", state.position.x, state.position.y);
+    println!("Echo: {}", state.message);
+    println!("Color: {:?}", state.color);
+    println!("Quit: {}", state.quit);
+}
+'''
+expect_output = '''Move to (1, 2)
+Echo: Hello world!
+Color: (255, 0, 255)
+Quit: true'''
+source = "rustlings (exercises/08_enums/enums3.rs, v6.5.0, MIT，R1 改写：裁去 Resize 变体与辅助方法，断言改 main 打印)"
