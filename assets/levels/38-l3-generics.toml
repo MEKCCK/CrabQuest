@@ -1,0 +1,30 @@
+[[level]]
+id = "l3-generics"
+title = "泛型：类型推断与标注"
+tier = "l3"
+description = "Vec::new() 无法推断元素类型 T，push 的 u8 与 i8 类型不明，编译失败。目标输出 [42, -1]。涉及概念：泛型与类型推断。"
+hint = "编译器需要类型标注来确定泛型参数 T。"
+hints = [
+  "编译器无法从使用点推断出泛型参数 T 的具体类型。",
+  "错误 E0282：类型推断失败，Vec<T> 的元素类型缺少锚点。见 book-cn ch10-01「泛型数据类型」：https://rustwiki.org/zh-CN/book/ch10-01-syntax.html",
+  "let mut numbers: Vec<i16> = Vec::new();\n标注 T 为 i16：u8 与 i8 都能经 into() 转换成它。",
+]
+starter_code = '''
+// Vec<T> 对元素类型 T 泛型，多数情况下编译器能推断 T，
+// 但这里需要显式类型标注帮编译器一把。
+
+fn main() {
+    // TODO: 给 Vec 补上类型标注，选一个能由 u8 与 i8 转换而来的整数类型。
+    let mut numbers = Vec::new();
+
+    // 以下代码不要改动。
+    let n1: u8 = 42;
+    numbers.push(n1.into());
+    let n2: i8 = -1;
+    numbers.push(n2.into());
+
+    println!("{numbers:?}");
+}
+'''
+expect_output = "[42, -1]"
+source = "rustlings (exercises/14_generics/generics1.rs, v6.5.0, MIT，直用；注释中文化)"

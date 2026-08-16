@@ -363,3 +363,44 @@ fn t7_l1_levels_parse_ok() {
     assert!(boss.source.starts_with("自编"), "source 应标自编");
     assert!(boss.starter_code.contains("let note ="), "starter 应保留不可变绑定 bug");
 }
+
+/// T7（P4-25 Wave 3a）：L3 层补齐 7 关（38-44）解析断言
+#[test]
+fn t7_l3_levels_parse_ok() {
+    let set = game_core::LevelSet::load(&game_data::levels_dir()).expect("关卡目录加载失败");
+    let t7_l3_ids = [
+        "l3-generics",      // 38 泛型推断，E0282
+        "l3-traits1",       // 39 trait 方法实现，E0046
+        "l3-iterators",     // 40 迭代器阶乘，E0308
+        "l3-iterators2",    // 41 迭代器消费，E0308
+        "l3-conversions",   // 42 From/as 转换，E0277
+        "l3-enums3",        // 43 枚举 match，逻辑修复关
+        "l3-boss",          // 44 自编 Boss：lifetime+generic+trait，E0106
+    ];
+    let expect_outputs = [
+        "[42, -1]",
+        "s: FooBar\ns: BarBar",
+        "0! = 1\n5! = 120\n10! = 3628800",
+        "Hello\n[\"Hello\", \"World\"]",
+        "7.125",
+        "Move to (1, 2)\nEcho: Hello world!\nColor: (255, 0, 255)\nQuit: true",
+        "1984: 42",
+    ];
+    let mut seen = std::collections::HashSet::new();
+    for (id, expect) in t7_l3_ids.iter().zip(expect_outputs.iter()) {
+        let l = set.get(id).unwrap_or_else(|| panic!("T7 L3 关卡 {id} 缺失"));
+        assert_eq!(l.tier, game_core::LevelTier::L3, "{id} 应为 l3 层");
+        assert!(!l.starter_code.trim().is_empty(), "{id} starter_code 非空");
+        assert!(!l.source.is_empty(), "{id} source 非空");
+        assert_eq!(l.hints.len(), 3, "{id} hints 应为三级");
+        assert!(seen.insert(id), "{id} id 重复");
+        assert!(!l.allow_compile_fail, "{id} 为普通 code 关");
+        assert_eq!(l.expect_output, *expect, "{id} expect_output 不一致");
+    }
+    assert_eq!(seen.len(), t7_l3_ids.len(), "T7 L3 关卡 id 应全局唯一");
+    // 44-l3-boss：L3 层末关启用 Boss 机制（v3 §4.2），修复点唯一（struct 补 'a）
+    let boss = set.get("l3-boss").unwrap();
+    assert!(boss.is_boss, "l3-boss 应启用 Boss 机制");
+    assert!(boss.source.starts_with("自编"), "source 应标自编");
+    assert!(boss.starter_code.contains("name: &str"), "starter 应保留缺生命周期标注的字段");
+}

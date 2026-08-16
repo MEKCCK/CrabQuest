@@ -1,0 +1,26 @@
+[[level]]
+id = "l3-conversions"
+title = "类型转换：as 与除法"
+tier = "l3"
+description = "average 中 f64 除以 usize，两边类型不同无法编译。目标输出 7.125。涉及概念：类型转换。"
+hint = "除法两边的类型要一致。"
+hints = [
+  "除法的两个操作数类型必须一致。",
+  "错误 E0277：f64 与 usize 不能直接相除。见 rust-by-example「类型转换」：https://rustwiki.org/zh-CN/rust-by-example/types/cast.html",
+  "total / values.len() as f64\n用 as f64 把 usize 转成 f64 再相除。",
+]
+starter_code = '''
+// Rust 中类型转换用 as 运算符完成。
+fn average(values: &[f64]) -> f64 {
+    let total = values.iter().sum::<f64>();
+    // TODO: 先做类型转换，再相除。
+    total / values.len()
+}
+
+fn main() {
+    let values = [3.5, 0.3, 13.0, 11.7];
+    println!("{}", average(&values));
+}
+'''
+expect_output = "7.125"
+source = "rustlings (exercises/23_conversions/conversions1.rs, v6.5.0, MIT，直用；注释中文化)"
