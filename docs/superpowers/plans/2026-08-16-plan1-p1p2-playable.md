@@ -1526,7 +1526,7 @@ git add -A && git -c user.name="pi" -c user.email="pi@local" commit -m "feat(cor
 
 ---
 
-### Task 8: 代码着色 tokenizer（syn 分词 → 颜色片段）
+### Task 8: 代码着色 tokenizer（rustc_lexer 官方词法器 → 颜色片段）
 
 **Files:**
 - Create: `crates/game-core/src/editor.rs`
