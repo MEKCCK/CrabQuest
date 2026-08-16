@@ -729,8 +729,9 @@ pub fn parse_rustc_stderr(stderr: &str) -> Vec<CompileError> {
             // "error[E0308]: ..." -> code = 6 chars after "error[E"
             let code_end = (pos + 6 + 5).min(t.len());
             let code = t[pos + 6..code_end].to_string();
-            let message = t[code_end.min(t.len())..]
-                .trim_start_matches(':')
+            // 去掉 "]: " 前缀得到纯消息（trim 掉开头的 ']' 与 ':'）
+            let message = t[code_end..]
+                .trim_start_matches(|c| c == ']' || c == ':')
                 .trim()
                 .to_string();
             errors.push(CompileError { code, line: None, message });
