@@ -199,3 +199,54 @@ fn errors_toml_has_fallback_section() {
     assert!(!fb.zh.is_empty());
     assert_eq!(fb.link, "https://doc.rust-lang.org/error_codes/index.html");
 }
+
+/// T8（P2-15）验收：P0 12 张基础卡（A 组 6 + B 组 5 + EUNKNOWN 兜底）zh/fix/example 全填充。
+/// 8 张高频卡（L3-D2 精修）人话首段 ≤30 字；全表术语合规（v3 §6.1：无 生存期/特征/悬挂）。
+#[test]
+fn errors_toml_p0_cards_complete_and_terminology_clean() {
+    let mapper = game_core::ErrorMapper::load(&game_data::errors_path()).expect("errors.toml 解析失败");
+    let p0 = [
+        "E0425", "E0596", "E0382", "E0106", "E0599", "E0597",
+        "E0282", "E0384", "E0594", "E0621", "E0601",
+    ];
+    for code in p0 {
+        let info = mapper.lookup(code).unwrap_or_else(|| panic!("缺少 P0 码 {code}"));
+        assert!(!info.zh.is_empty(), "{code} 缺 zh");
+        assert!(
+            info.fix.as_deref().is_some_and(|f| !f.is_empty()),
+            "{code} 缺 fix（P0 基础卡要求修复方向全填充）"
+        );
+        assert!(
+            info.example.as_deref().is_some_and(|e| !e.trim().is_empty()),
+            "{code} 缺 example（P0 基础卡要求复现代码全填充）"
+        );
+    }
+    // EUNKNOWN 兜底卡：fallback zh 非空（ErrorMapper 侧已断言 link，此处锁内容非空）
+    let fb = mapper.fallback().expect("errors.toml 必须含 [fallback] 段");
+    assert!(!fb.zh.is_empty());
+
+    // 8 张高频卡：人话（zh 首个「：」之前）≤30 字（v3 §6.2 卡片「一句话人话」上限）
+    let refined = [
+        "E0382", "E0502", "E0499", "E0596", "E0106", "E0308", "E0277", "E0507",
+    ];
+    for code in refined {
+        let info = mapper.lookup(code).unwrap_or_else(|| panic!("缺少高频卡 {code}"));
+        let human = info.zh.split('：').next().unwrap_or("");
+        assert!(
+            human.chars().count() <= 30,
+            "{code} 人话首段超 30 字: {human}（zh={}）",
+            info.zh
+        );
+    }
+
+    // 术语合规：全表 zh/fix 无 v3 §6.1 禁用词（特征= trait 译名禁用；卡片文案全部规避）
+    let banned = ["生存期", "特征", "悬挂"];
+    for (code, info) in mapper.iter() {
+        for w in banned {
+            assert!(!info.zh.contains(w), "{code} zh 含禁用词「{w}」: {}", info.zh);
+            if let Some(fix) = &info.fix {
+                assert!(!fix.contains(w), "{code} fix 含禁用词「{w}」: {fix}");
+            }
+        }
+    }
+}
