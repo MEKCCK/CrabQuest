@@ -1,0 +1,28 @@
+[[level]]
+id = "l2-hashmap"
+title = "哈希 map：声明与填充"
+tier = "l2"
+description = "fruit_basket 里 basket 未声明就使用，无法编译。目标输出 3 7（水果种类数与总数）。涉及概念：哈希 map。"
+hint = "哈希 map 使用前必须先创建实例。"
+hints = [
+  "按名字取用变量前，必须先创建它；哈希 map 要先声明才能插入。",
+  "E0425：basket 未声明。见 book-cn ch08-03「哈希 map 存储键值对」：https://rustwiki.org/zh-CN/book/ch08-03-hash-maps.html",
+  "let mut basket = HashMap::new();\nbasket.insert(String::from(\"apple\"), 2);\nbasket.insert(String::from(\"mango\"), 3);\n声明 map 并补两种水果，凑够 3 种共 7 个。",
+]
+starter_code = '''
+use std::collections::HashMap;
+
+fn fruit_basket() -> HashMap<String, u32> {
+    // TODO: 声明哈希 map 并至少再放入两种水果
+    basket.insert(String::from("banana"), 2);
+
+    basket
+}
+
+fn main() {
+    let basket = fruit_basket();
+    println!("{} {}", basket.len(), basket.values().sum::<u32>());
+}
+'''
+expect_output = "3 7"
+source = "rustlings (exercises/11_hashmaps/hashmaps1.rs, v6.5.0, MIT，测试体搬 main：断言改 println，声明与补果留白)"
