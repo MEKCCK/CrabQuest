@@ -1,0 +1,4 @@
+kind = "panic"
+line = 3
+message_contains = "Option::unwrap()"
+classification = "unwrap_option_none"
