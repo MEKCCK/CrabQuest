@@ -16,7 +16,7 @@ pub fn parse_rustc_stderr(stderr: &str) -> Vec<CompileError> {
             let code_end = (pos + 6 + 5).min(t.len());
             let code = t[pos + 6..code_end].to_string();
             let message = t[code_end.min(t.len())..]
-                .trim_start_matches(':')
+                .trim_start_matches(|c| c == ']' || c == ':')
                 .trim()
                 .to_string();
             errors.push(CompileError { code, line: None, message });
