@@ -1,6 +1,7 @@
 use egui_macroquad::egui;
 use game_core::app::{ChapterMapData, FeedbackData, GameApp, GameFlow, Input, LevelData, MenuData, Screen};
 use game_core::editor::{tokenize, TokenKind};
+use game_core::engine::{hint_unlock_state, HintUnlockState};
 use game_core::error::GameError;
 use game_core::level::LevelTier;
 use game_core::ui::UiBackend;
@@ -9,6 +10,12 @@ use macroquad::prelude::*;
 
 /// JetBrains Maple Mono（内嵌，SIL OFL 许可）——覆盖 CJK 统一表意区，保证中文正常渲染
 const MAPLE_FONT: &[u8] = include_bytes!("../assets/JetBrainsMapleMono-Regular.ttf");
+
+/// P3-19：编辑器 TextEdit 的持久化 id salt（光标状态跨帧/跨布局保持，
+/// 行号跳转先写 TextEditState 再绘制，焦点行才能落在目标行首）
+const EDITOR_ID_SALT: &str = "code_editor";
+/// P3-19：编辑器滚动区限高（与反馈面板 max_height 一致；短代码自动收缩）
+const EDITOR_MAX_HEIGHT: f32 = 420.0;
 
 /// 把中文字体安装进 egui 字体系统：插入 Proportional / Monospace 家族首位，
 /// 中文与拉丁字符都用它渲染，缺失字形（如部分 emoji）回退到 egui 默认字体。
@@ -43,6 +50,8 @@ pub struct GameUi {
     offline: bool,
     /// P1-03：toast 提示（离线点击链接等），3 秒后自动消失
     toast: Option<(String, std::time::Instant)>,
+    /// P2-11：参考答案二次确认弹窗是否打开（「先自己试试？」[再想想 / 查看答案]）
+    ref_dialog: bool,
 }
 
 impl GameUi {
@@ -55,6 +64,7 @@ impl GameUi {
             ime_hint_shown: false,
             offline: false,
             toast: None,
+            ref_dialog: false,
         }
     }
 
@@ -251,7 +261,7 @@ impl GameUi {
             egui::TopBottomPanel::bottom("feedback_panel")
                 .resizable(false)
                 .show(ctx, |ui| {
-                    self.draw_feedback_panel(ui, fb, false);
+                    self.draw_feedback_panel(ui, app, fb, false);
                 });
         }
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -275,7 +285,23 @@ impl GameUi {
                 ui.label(stats);
             });
             ui.label(&d.level.description);
-            if let Some((text, cur, total)) = d.visible_hint() {
+            // P2-11：提示面板——hint_unlock 非空走失败联动（自动推进替代手动逐级），
+            // 为空保持 P1 手动逐级揭示（visible_hint / hint_step，旧 TOML 零改动）
+            let fail_count = app
+                .save_ref()
+                .level_states
+                .get(&d.level.id)
+                .map(|p| p.fail_count)
+                .unwrap_or(0);
+            if !d.level.hint_unlock.is_empty() {
+                if let Some(st) = hint_unlock_state(
+                    d.level.hints.len(),
+                    &d.level.hint_unlock,
+                    fail_count,
+                ) {
+                    self.draw_unlock_hints(ui, app, d, st);
+                }
+            } else if let Some((text, cur, total)) = d.visible_hint() {
                 ui.add_space(4.0);
                 let label = if total > 1 {
                     format!("💡 提示 {cur}/{total}: {text}")
@@ -290,33 +316,8 @@ impl GameUi {
                 ui.label(egui::RichText::new("代码编辑器不支持中文输入法，中文内容请复制粘贴").weak());
                 self.ime_hint_shown = true;
             }
-            ui.horizontal(|ui| {
-                // 行号 gutter（对齐用 monospace 字体）
-                let line_count = self.code_buf.lines().count().max(1);
-                let gutter = (1..=line_count).map(|n| n.to_string()).collect::<Vec<_>>().join("\n");
-                ui.add(
-                    egui::Label::new(
-                        egui::RichText::new(gutter).monospace().color(egui::Color32::from_rgb(120, 120, 120)),
-                    )
-                    .selectable(false),
-                );
-                // 编辑器（行号 gutter 与代码区共用 TextStyle::Monospace，字号一致）
-                let font_id = egui::TextStyle::Monospace.resolve(ui.style());
-                let mut layouter = move |ui: &egui::Ui, text: &str, wrap_width: f32| {
-                    let job = code_layout_job(text, wrap_width, &font_id);
-                    ui.fonts(|f| f.layout_job(job))
-                };
-                let resp = ui.add(
-                    egui::TextEdit::multiline(&mut self.code_buf)
-                        .font(egui::TextStyle::Monospace)
-                        .desired_rows(20)
-                        .desired_width(f32::INFINITY)
-                        .layouter(&mut layouter),
-                );
-                if resp.changed() {
-                    self.sync_code(app);
-                }
-            });
+            // P3-19：编辑器（行号 gutter + 代码区；支持行号跳转光标）
+            self.draw_editor(ui, app);
             ui.separator();
             // P2-08：0 心禁提交（按钮置灰 + 复习引导）；编辑不禁止
             let can_submit = hearts > 0;
@@ -324,9 +325,14 @@ impl GameUi {
                 if ui.add_enabled(can_submit, egui::Button::new("▶ 提交运行")).clicked() {
                     self.busy = Busy::Show;
                 }
-                let hint_label = match d.visible_hint() {
-                    Some((_, cur, total)) if total > 1 => format!("💡 提示 {cur}/{total}"),
-                    _ => "💡 提示".to_owned(),
+                let hint_label = if !d.level.hint_unlock.is_empty() {
+                    // 联动模式：按键只开关面板（自动推进替代手动逐级）
+                    "💡 提示".to_owned()
+                } else {
+                    match d.visible_hint() {
+                        Some((_, cur, total)) if total > 1 => format!("💡 提示 {cur}/{total}"),
+                        _ => "💡 提示".to_owned(),
+                    }
                 };
                 if ui.button(hint_label).clicked() {
                     self.act(app, Input::Hint);
@@ -348,6 +354,150 @@ impl GameUi {
                 );
             }
         });
+    }
+
+    /// P3-19：编辑器主体（行号 gutter + 代码区）。包装在垂直 ScrollArea 中：
+    /// 行号跳转时 `ui.scroll_to_rect` 才能把光标行滚进可视区；短代码自动收缩、
+    /// 长代码限高（EDITOR_MAX_HEIGHT）内部滚动。
+    fn draw_editor(&mut self, ui: &mut egui::Ui, app: &mut GameApp) {
+        let edit_id = ui.make_persistent_id(EDITOR_ID_SALT);
+        // P3-19：一次性跳转目标（应用后由 take 清除，重渲染不会反复跳回）
+        let jump_line = app.take_focus_line();
+        if let Some(line) = jump_line {
+            // 先把光标写入 TextEditState（egui 持久化状态），本帧绘制即落在目标行首；
+            // 同时请求焦点让光标绘制/闪烁并参与事件处理（events 从该光标起步）
+            let ccursor = line_start_ccursor(&self.code_buf, line);
+            let mut st = egui::TextEdit::load_state(ui.ctx(), edit_id).unwrap_or_default();
+            st.cursor.set_char_range(Some(egui::text::CCursorRange::one(ccursor)));
+            st.store(ui.ctx(), edit_id);
+            ui.memory_mut(|m| m.request_focus(edit_id));
+        }
+        egui::ScrollArea::vertical()
+            .max_height(EDITOR_MAX_HEIGHT)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    // 行号 gutter（对齐用 monospace 字体）
+                    let line_count = self.code_buf.lines().count().max(1);
+                    let gutter = (1..=line_count).map(|n| n.to_string()).collect::<Vec<_>>().join("\n");
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(gutter).monospace().color(egui::Color32::from_rgb(120, 120, 120)),
+                        )
+                        .selectable(false),
+                    );
+                    // 编辑器（行号 gutter 与代码区共用 TextStyle::Monospace，字号一致）
+                    let font_id = egui::TextStyle::Monospace.resolve(ui.style());
+                    let mut layouter = move |ui: &egui::Ui, text: &str, wrap_width: f32| {
+                        let job = code_layout_job(text, wrap_width, &font_id);
+                        ui.fonts(|f| f.layout_job(job))
+                    };
+                    let output = egui::TextEdit::multiline(&mut self.code_buf)
+                        .id(edit_id)
+                        .font(egui::TextStyle::Monospace)
+                        .desired_rows(20)
+                        .desired_width(f32::INFINITY)
+                        .layouter(&mut layouter)
+                        .show(ui);
+                    if output.response.changed() {
+                        self.sync_code(app);
+                    }
+                    if jump_line.is_some() {
+                        if let Some(cr) = output.cursor_range {
+                            // 光标行滚动进可视区：galley 局部坐标 + galley 偏移 → 内容坐标
+                            let rect = output
+                                .galley
+                                .pos_from_cursor(&cr.primary)
+                                .translate(output.galley_pos.to_vec2());
+                            ui.scroll_to_rect(rect, None);
+                        }
+                    }
+                });
+            });
+    }
+
+    /// P2-11：失败联动模式提示面板：列出已解锁提示，自动展开索引高亮；
+    /// 失败 ≥4 次显示「查看参考答案」按钮（二次确认「先自己试试？」），
+    /// 确认后才展示最后一条 hint（解法级修复代码）。查看零成本，确认前不展示代码。
+    fn draw_unlock_hints(
+        &mut self,
+        ui: &mut egui::Ui,
+        app: &mut GameApp,
+        d: &LevelData,
+        st: HintUnlockState,
+    ) {
+        if d.show_hint {
+            ui.add_space(4.0);
+            for i in 0..st.unlocked {
+                let text = format!("💡 提示 {}/{}: {}", i + 1, d.level.hints.len(), d.level.hints[i]);
+                if i == st.expanded {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(255, 200, 80),
+                        egui::RichText::new(text).strong(),
+                    );
+                } else {
+                    ui.colored_label(egui::Color32::from_rgb(205, 180, 135), text);
+                }
+            }
+        }
+        if st.show_reference {
+            ui.add_space(4.0);
+            if d.reference_revealed {
+                // 已二次确认：展示参考答案（最后一条 hint = 解法级修复代码）
+                egui::Frame::NONE
+                    .fill(egui::Color32::from_rgb(45, 55, 42))
+                    .corner_radius(4)
+                    .inner_margin(8.0)
+                    .show(ui, |ui| {
+                        ui.label(
+                            egui::RichText::new("📖 参考答案")
+                                .strong()
+                                .color(egui::Color32::from_rgb(140, 215, 150)),
+                        );
+                        if let Some(last) = d.level.hints.last() {
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(last)
+                                        .monospace()
+                                        .color(egui::Color32::from_rgb(170, 210, 175)),
+                                )
+                                .wrap(),
+                            );
+                        }
+                    });
+            } else if ui.button("📖 查看参考答案").clicked() {
+                self.ref_dialog = true;
+            }
+            // 二次确认（v3 §7.6：「先自己试试？」[再想想 / 查看答案]）——
+            // 内联确认框（不用浮层 Window：headless 测试不可达，且内联更贴近编辑器上下文）
+            if self.ref_dialog {
+                egui::Frame::NONE
+                    .fill(egui::Color32::from_rgb(58, 52, 34))
+                    .corner_radius(4)
+                    .inner_margin(8.0)
+                    .show(ui, |ui| {
+                        ui.label(egui::RichText::new("先自己试试？").strong());
+                        ui.add_space(6.0);
+                        ui.horizontal(|ui| {
+                            if ui.button("再想想").clicked() {
+                                self.answer_reference(app, false);
+                            }
+                            if ui.button("查看答案").clicked() {
+                                self.answer_reference(app, true);
+                            }
+                        });
+                    });
+            }
+        }
+    }
+
+    /// P2-11：参考答案确认弹窗按钮：`confirm=false` 拒绝（关闭弹窗、不展示任何代码）；
+    /// `confirm=true` 确认 → 展示参考答案并记录查看（零成本，engine.reveal_hint 幂等）。
+    fn answer_reference(&mut self, app: &mut GameApp, confirm: bool) {
+        self.ref_dialog = false;
+        if confirm {
+            app.reveal_reference();
+        }
     }
 
     fn draw_feedback(&mut self, ctx: &egui::Context, app: &mut GameApp, f: &FeedbackData) {
@@ -386,14 +536,14 @@ impl GameUi {
                 });
             } else {
                 ui.add_space(12.0);
-                self.draw_feedback_panel(ui, f, true);
+                self.draw_feedback_panel(ui, app, f, true);
             }
         });
     }
 
     /// P1-03 失败反馈面板主体（Feedback 屏与编辑器底部固定区共用）。
     /// `show_nav_hint`：Feedback 屏提示「Enter 返回编辑 / Esc 回地图」，编辑器内不重复。
-    fn draw_feedback_panel(&mut self, ui: &mut egui::Ui, f: &FeedbackData, show_nav_hint: bool) {
+    fn draw_feedback_panel(&mut self, ui: &mut egui::Ui, app: &mut GameApp, f: &FeedbackData, show_nav_hint: bool) {
         // 防挫败语气（v3 §7.6）：「❌ 未通过」→「🔧 还差一点」
         ui.horizontal(|ui| {
             ui.heading(egui::RichText::new("🔧 还差一点").color(egui::Color32::from_rgb(255, 180, 80)));
@@ -407,7 +557,7 @@ impl GameUi {
             .show(ui, |ui| {
                 // ①-⑤ 编译错误卡片：第一条默认展开，其余折叠「还有 N 个错误」逐个展开
                 if !f.errors.is_empty() {
-                    self.draw_error_card(ui, &f.errors[0]);
+                    self.draw_error_card(ui, app, &f.errors[0]);
                     if f.errors.len() > 1 {
                         ui.add_space(4.0);
                         ui.label(
@@ -421,7 +571,8 @@ impl GameUi {
                             .id_salt(("err", i))
                             .default_open(false)
                             .show(ui, |ui| {
-                                self.draw_error_card_body(ui, card);
+                                // P3-19：展开后整卡渲染（行号同样可点击跳转）
+                                self.draw_error_card(ui, app, card);
                             });
                         }
                     }
@@ -443,8 +594,9 @@ impl GameUi {
         }
     }
 
-    /// 单张错误卡（默认完全展开）：① 徽章+行号+标题 ② zh 展开 ③ 怎么改折叠 ④ 原文折叠 ⑤ 链接
-    fn draw_error_card(&mut self, ui: &mut egui::Ui, card: &ErrorCard) {
+    /// 单张错误卡（默认完全展开）：① 徽章+行号+标题 ② zh 展开 ③ 怎么改折叠 ④ 原文折叠 ⑤ 链接。
+    /// P3-19：行号以链接样式（蓝色 + 下划线）渲染，点击 → 编辑器光标跳到该行。
+    fn draw_error_card(&mut self, ui: &mut egui::Ui, app: &mut GameApp, card: &ErrorCard) {
         egui::Frame::NONE
             .fill(egui::Color32::from_rgb(52, 42, 40))
             .corner_radius(4)
@@ -459,10 +611,17 @@ impl GameUi {
                             .background_color(egui::Color32::from_rgb(72, 48, 22)),
                     );
                     if let Some(line) = card.line {
-                        ui.label(
-                            egui::RichText::new(format!("第 {line} 行"))
-                                .color(egui::Color32::from_rgb(205, 205, 215)),
+                        let resp = ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(format!("第 {line} 行"))
+                                    .color(egui::Color32::from_rgb(110, 170, 255))
+                                    .underline(),
+                            )
+                            .sense(egui::Sense::click()),
                         );
+                        if resp.clicked() {
+                            app.jump_to_line(line);
+                        }
                     }
                     ui.label(egui::RichText::new(Self::card_title(card)).strong());
                 });
@@ -692,6 +851,21 @@ fn code_layout_job(text: &str, wrap_width: f32, font_id: &egui::FontId) -> egui:
         job.append(&text[cursor..], 0.0, normal);
     }
     job
+}
+
+/// P3-19：把 0-based 行号转换为该行行首的字符索引（egui CCursor 用字符索引而非字节）。
+/// 行号越界（≥ 行数）时钳制到文件末尾；空文件恒为 0。
+/// 字节偏移恒为 UTF-8 字符边界（逐行 len 累加 + '\n'），切片安全。
+fn line_start_ccursor(code: &str, line: usize) -> egui::text::CCursor {
+    let mut byte = 0;
+    for (i, l) in code.split('\n').enumerate() {
+        if i == line {
+            break;
+        }
+        byte += l.len() + 1; // 该行字节数 + '\n'
+    }
+    let byte = byte.min(code.len()); // 越界 → 文件末尾
+    egui::text::CCursor::new(code[..byte].chars().count())
 }
 
 impl UiBackend for GameUi {
@@ -1018,7 +1192,7 @@ mod tests {
     fn draw_panel(ctx: &egui::Context, game_ui: &mut GameUi, fb: &FeedbackData) -> egui::FullOutput {
         ctx.run(egui::RawInput::default(), |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
-                game_ui.draw_feedback_panel(ui, fb, true);
+                game_ui.draw_feedback_panel(ui, &mut test_app(), fb, true);
             });
         })
     }
@@ -1165,5 +1339,314 @@ mod tests {
             shapes_contain_text(&out.shapes, "无法打开在线教材"),
             "toast 应绘制出来"
         );
+    }
+
+    // ===== P3-19：行号跳转编辑器（headless）=====
+
+    fn shapes_contain_underlined(shapes: &[egui::epaint::ClippedShape], needle: &str) -> bool {
+        shapes.iter().any(|clipped| match &clipped.shape {
+            egui::Shape::Text(t) => {
+                t.galley.text().contains(needle)
+                    && t
+                        .galley
+                        .job
+                        .sections
+                        .iter()
+                        .any(|s| s.format.underline.width > 0.0)
+            }
+            _ => false,
+        })
+    }
+
+    #[test]
+    fn error_line_rendered_as_clickable_link() {
+        let ctx = egui::Context::default();
+        // line = Some → 链接样式（下划线）行号
+        let fb = fail_fb(vec![card("E0308", Some(2), "类型不匹配", "", None)]);
+        let mut game_ui = GameUi::new();
+        let out = draw_panel(&ctx, &mut game_ui, &fb);
+        assert!(shapes_contain_text(&out.shapes, "第 2 行"), "行号应渲染");
+        assert!(
+            shapes_contain_underlined(&out.shapes, "第 2 行"),
+            "行号应为可点击链接样式（下划线）"
+        );
+        // line = None（EUNKNOWN 无 --> 行）→ 不渲染可点击行号
+        let fb_none = fail_fb(vec![card("EUNKNOWN", None, "编译错误", "", None)]);
+        let mut game_ui2 = GameUi::new();
+        let out2 = draw_panel(&ctx, &mut game_ui2, &fb_none);
+        assert!(!shapes_contain_text(&out2.shapes, "第 "), "line=None 不渲染行号");
+    }
+
+    #[test]
+    fn error_line_click_sets_focus_line() {
+        let ctx = egui::Context::default();
+        let mut app = test_app();
+        app.handle(Input::Enter).unwrap(); // 进入编辑器（last_level 就位）
+        let mut game_ui = GameUi::new();
+        let fb = fail_fb(vec![card("E0308", Some(2), "类型不匹配", "", None)]);
+        let screen_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 700.0));
+        let raw = |events: Vec<egui::Event>| egui::RawInput {
+            screen_rect: Some(screen_rect),
+            events,
+            ..Default::default()
+        };
+        // 帧 1：定位「第 2 行」文本位置（与后续帧同一 screen_rect，布局一致）
+        let mut line_pos: Option<egui::Pos2> = None;
+        ctx.run(raw(vec![]), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                game_ui.draw_feedback_panel(ui, &mut app, &fb, true);
+            });
+        })
+        .shapes
+        .iter()
+        .for_each(|c| {
+            if let egui::Shape::Text(t) = &c.shape {
+                if t.galley.text() == "第 2 行" {
+                    // 点击标签中心
+                    line_pos = Some(t.pos + egui::vec2(t.galley.size().x / 2.0, t.galley.size().y / 2.0));
+                }
+            }
+        });
+        let pos = line_pos.expect("应绘制出「第 2 行」");
+        let button = |pressed: bool| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        };
+        // 帧 2：按下（PointerMoved + PointerButton 更新指针状态与 press_origin）
+        ctx.run(raw(vec![egui::Event::PointerMoved(pos), button(true)]), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                game_ui.draw_feedback_panel(ui, &mut app, &fb, true);
+            });
+        });
+        // 帧 3：释放（click 在 release 触发）
+        ctx.run(raw(vec![egui::Event::PointerMoved(pos), button(false)]), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                game_ui.draw_feedback_panel(ui, &mut app, &fb, true);
+            });
+        });
+        assert_eq!(app.focus_line, Some(1), "点击「第 2 行」→ 跳转目标 0-based 1");
+        assert!(matches!(app.screen(), Screen::Level(_)), "点击行号应回到编辑器屏");
+    }
+
+    #[test]
+    fn focus_jump_applies_cursor_at_line_start() {
+        let ctx = egui::Context::default();
+        let mut app = test_app();
+        let mut game_ui = GameUi::new();
+        app.handle(Input::Enter).unwrap();
+        // 首帧：同步 code_buf
+        ctx.run(egui::RawInput::default(), |ctx| {
+            game_ui.draw(ctx, &mut app);
+        });
+        let code = "fn main() {\n    let x = 1;\n    println!(\"hi\");\n}";
+        game_ui.code_buf = code.into();
+        game_ui.sync_code(&mut app);
+        app.focus_line = Some(2); // 第 3 行（0-based）
+        ctx.run(egui::RawInput::default(), |ctx| {
+            game_ui.draw(ctx, &mut app);
+        });
+        assert_eq!(app.focus_line, None, "跳转应用后清除（一次性）");
+        // 读取 TextEdit 持久化状态：光标字符索引应等于第 3 行行首
+        // 与 draw_editor 完全同路径取 id（CentralPanel 固定 ui id + make_persistent_id）
+        let mut captured = None;
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                captured = Some(ui.make_persistent_id(EDITOR_ID_SALT));
+            });
+        });
+        let id = captured.expect("应捕获编辑器 id");
+        let st = egui::TextEdit::load_state(&ctx, id).expect("编辑器应有持久化光标状态");
+        let cc = st.cursor.char_range().expect("应有光标范围");
+        let expected = code.split('\n').take(2).map(|l| l.chars().count() + 1).sum::<usize>();
+        assert_eq!(cc.primary.index, expected, "光标应落在第 3 行行首");
+    }
+
+    #[test]
+    fn focus_jump_out_of_range_clamps_to_end() {
+        // 纯函数：越界行 → 文件末尾字符索引
+        let code = "fn main() {\n    let x = 1;\n}";
+        let cc = line_start_ccursor(code, 99);
+        assert_eq!(cc.index, code.chars().count(), "越界行钳制到文件末尾");
+        assert_eq!(line_start_ccursor(code, 0).index, 0);
+        assert_eq!(line_start_ccursor("", 0).index, 0, "空文件恒 0");
+        // 端到端：focus_line 越界 → 应用后光标在末尾
+        let ctx = egui::Context::default();
+        let mut app = test_app();
+        let mut game_ui = GameUi::new();
+        app.handle(Input::Enter).unwrap();
+        ctx.run(egui::RawInput::default(), |ctx| {
+            game_ui.draw(ctx, &mut app);
+        });
+        game_ui.code_buf = code.into();
+        game_ui.sync_code(&mut app);
+        app.focus_line = Some(99);
+        ctx.run(egui::RawInput::default(), |ctx| {
+            game_ui.draw(ctx, &mut app);
+        });
+        let mut captured = None;
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                captured = Some(ui.make_persistent_id(EDITOR_ID_SALT));
+            });
+        });
+        let id = captured.expect("应捕获编辑器 id");
+        let st = egui::TextEdit::load_state(&ctx, id).expect("编辑器应有持久化光标状态");
+        let cc = st.cursor.char_range().unwrap();
+        assert_eq!(cc.primary.index, code.chars().count(), "越界跳转光标在文件末尾");
+    }
+
+    #[test]
+    fn focus_jump_switches_between_lines() {
+        // 连续两次跳转：第二次覆盖第一次（不同错误 → 光标正确切换）
+        let ctx = egui::Context::default();
+        let mut app = test_app();
+        let mut game_ui = GameUi::new();
+        app.handle(Input::Enter).unwrap();
+        ctx.run(egui::RawInput::default(), |ctx| {
+            game_ui.draw(ctx, &mut app);
+        });
+        let code = "a\nbb\nccc\ndddd";
+        game_ui.code_buf = code.into();
+        game_ui.sync_code(&mut app);
+        app.focus_line = Some(1); // 第 2 行
+        ctx.run(egui::RawInput::default(), |ctx| {
+            game_ui.draw(ctx, &mut app);
+        });
+        app.focus_line = Some(3); // 第 4 行
+        ctx.run(egui::RawInput::default(), |ctx| {
+            game_ui.draw(ctx, &mut app);
+        });
+        // 与 draw_editor 完全同路径取 id（CentralPanel 固定 ui id + make_persistent_id）
+        let mut captured = None;
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                captured = Some(ui.make_persistent_id(EDITOR_ID_SALT));
+            });
+        });
+        let id = captured.expect("应捕获编辑器 id");
+        let st = egui::TextEdit::load_state(&ctx, id).unwrap();
+        let cc = st.cursor.char_range().unwrap();
+        let expected = code.split('\n').take(3).map(|l| l.chars().count() + 1).sum::<usize>();
+        assert_eq!(cc.primary.index, expected, "第二次跳转覆盖第一次（光标在第 4 行行首）");
+    }
+
+    // ===== P2-11：hint 失败联动 UI（headless）=====
+
+    fn unlock_hint_test_app() -> GameApp {
+        let levels = parse_levels(
+            "[[level]]\nid = \"h\"\ntitle = \"h\"\ntier = \"l1\"\ndescription = \"d\"\nhints = [\"概念\", \"定位\", \"解法\"]\nhint_unlock = [1, 3, 5]\nstarter_code = \"fn main() { println!(1); }\"\nexpect_output = \"1\"\nsource = \"x\"\n",
+        )
+        .unwrap();
+        let engine = Engine::new(
+            LevelSet { levels },
+            SaveData::default(),
+            ErrorMapper::default_fallback(),
+            Box::new(DevSandbox::new()),
+        );
+        GameApp::new(engine)
+    }
+
+    fn set_fail_count(app: &mut GameApp, level_id: &str, fail_count: u32) {
+        app.engine
+            .save
+            .level_states
+            .entry(level_id.into())
+            .or_default()
+            .fail_count = fail_count;
+    }
+
+    #[test]
+    fn reference_button_visible_only_at_four_fails() {
+        let ctx = egui::Context::default();
+        // fc=1：无参考答案按钮
+        let mut app1 = unlock_hint_test_app();
+        app1.handle(Input::Enter).unwrap();
+        set_fail_count(&mut app1, "h", 1);
+        let mut ui1 = GameUi::new();
+        let out1 = ctx.run(egui::RawInput::default(), |ctx| {
+            ui1.draw(ctx, &mut app1);
+        });
+        assert!(!shapes_contain_text(&out1.shapes, "查看参考答案"), "fc=1 不应出现参考答案按钮");
+        // fc=4：出现
+        let mut app4 = unlock_hint_test_app();
+        app4.handle(Input::Enter).unwrap();
+        set_fail_count(&mut app4, "h", 4);
+        let mut ui4 = GameUi::new();
+        let out4 = ctx.run(egui::RawInput::default(), |ctx| {
+            ui4.draw(ctx, &mut app4);
+        });
+        assert!(shapes_contain_text(&out4.shapes, "查看参考答案"), "fc=4 应出现参考答案按钮");
+        assert!(!shapes_contain_text(&out4.shapes, "先自己试试"), "未点击不弹确认框");
+    }
+
+    #[test]
+    fn reference_dialog_confirm_reveals_reject_hides() {
+        let ctx = egui::Context::default();
+        // —— 拒绝路径：弹窗 → 再想想 → 不展示任何代码
+        let mut app = unlock_hint_test_app();
+        app.handle(Input::Enter).unwrap();
+        set_fail_count(&mut app, "h", 4);
+        let mut game_ui = GameUi::new();
+        game_ui.ref_dialog = true;
+        let out_open = ctx.run(egui::RawInput::default(), |ctx| {
+            game_ui.draw(ctx, &mut app);
+        });
+        assert!(shapes_contain_text(&out_open.shapes, "先自己试试？"), "确认弹窗文案");
+        assert!(shapes_contain_text(&out_open.shapes, "再想想"), "拒绝按钮");
+        assert!(shapes_contain_text(&out_open.shapes, "查看答案"), "确认按钮");
+        assert!(!shapes_contain_text(&out_open.shapes, "📖 参考答案"), "确认前不展示答案块");
+        // 拒绝
+        game_ui.answer_reference(&mut app, false);
+        assert!(!game_ui.ref_dialog, "拒绝后弹窗关闭");
+        let out_rej = ctx.run(egui::RawInput::default(), |ctx| {
+            game_ui.draw(ctx, &mut app);
+        });
+        assert!(!shapes_contain_text(&out_rej.shapes, "先自己试试？"), "拒绝后弹窗消失");
+        assert!(!shapes_contain_text(&out_rej.shapes, "📖 参考答案"), "拒绝后不展示代码");
+        assert_eq!(
+            app.engine.save.level_states.get("h").map(|p| p.hints_used.clone()).unwrap_or_default(),
+            Vec::<u32>::new(),
+            "拒绝不记录查看"
+        );
+        match app.screen() {
+            Screen::Level(d) => assert!(!d.reference_revealed, "拒绝不标记展示"),
+            other => panic!("expected Level, got {other:?}"),
+        }
+        // —— 确认路径：查看答案 → 展示参考答案（最后一条 hint）+ 记录查看
+        game_ui.ref_dialog = true;
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            game_ui.draw(ctx, &mut app);
+        });
+        game_ui.answer_reference(&mut app, true);
+        assert_eq!(
+            app.engine.save.level_states.get("h").unwrap().hints_used,
+            vec![2],
+            "确认后记录最后一条 hint 查看"
+        );
+        let out_conf = ctx.run(egui::RawInput::default(), |ctx| {
+            game_ui.draw(ctx, &mut app);
+        });
+        assert!(shapes_contain_text(&out_conf.shapes, "📖 参考答案"), "确认后展示答案块");
+        assert!(shapes_contain_text(&out_conf.shapes, "解法"), "答案块含最后一条 hint 内容");
+    }
+
+    #[test]
+    fn hint_panel_lists_unlocked_hints_with_expanded_highlight() {
+        let ctx = egui::Context::default();
+        let mut app = unlock_hint_test_app();
+        app.handle(Input::Enter).unwrap();
+        set_fail_count(&mut app, "h", 3); // 全部解锁，自动推进到 hint[1]
+        app.handle(Input::Hint).unwrap(); // 打开面板（联动模式）
+        let mut game_ui = GameUi::new();
+        let out = ctx.run(egui::RawInput::default(), |ctx| {
+            game_ui.draw(ctx, &mut app);
+        });
+        assert!(shapes_contain_text(&out.shapes, "💡 提示 1/3: 概念"), "hint1 列出");
+        assert!(shapes_contain_text(&out.shapes, "💡 提示 2/3: 定位"), "hint2 列出");
+        assert!(shapes_contain_text(&out.shapes, "💡 提示 3/3: 解法"), "hint3 列出（fc=3 全解锁）");
+        // fc=3 无参考答案按钮
+        assert!(!shapes_contain_text(&out.shapes, "查看参考答案"));
     }
 }
