@@ -26,6 +26,9 @@ pub enum GameError {
     CorruptSave(String),
     #[error("沙盒拦截: {0}")]
     SandboxBlocked(String),
+    /// P2-08：0 心禁提交（UI 应已禁用按钮并提示复习回血；引擎层兜底拦截）
+    #[error("❤️ 已空：复习关卡说明可回 1 心")]
+    NoHearts,
     #[error("IO 错误: {0}")]
     Io(#[from] std::io::Error),
 }
