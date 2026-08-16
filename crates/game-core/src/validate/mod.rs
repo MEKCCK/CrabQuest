@@ -82,12 +82,14 @@ pub fn validate(
                     let loc = e.line.map(|l| format!("（第 {l} 行）")).unwrap_or_default();
                     let zh = match e.kind {
                         IssueKind::NoCode => mapper
-                            .lookup(&e.code)
+                            .fallback()
                             .map(|i| format!("  💡 {}（{}）", i.zh, i.link))
+                            .or_else(|| mapper.lookup(&e.code).map(|i| format!("  💡 {}（{}）", i.zh, i.link)))
                             .unwrap_or_else(|| format!("  💡 {NO_CODE_ZH}")),
                         IssueKind::CompileCode => mapper
                             .lookup(&e.code)
                             .map(|i| format!("  💡 {}（{}）", i.zh, i.link))
+                            .or_else(|| mapper.fallback().map(|i| format!("  💡 {}（{}）", i.zh, i.link)))
                             .unwrap_or_default(),
                     };
                     let code_label = match e.kind {
@@ -387,6 +389,21 @@ mod tests {
                 assert!(feedback[0].contains("编译错误（无错误码）"), "feedback: {feedback:?}");
                 assert!(feedback[0].contains("positional arguments"));
                 assert!(feedback[0].contains("💡"), "兜底中文提示缺失: {feedback:?}");
+            }
+            other => panic!("expected Fail, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn uncovered_code_uses_fallback() {
+        // P1-02：未收录码（CompileCode 查表落空）→ 走 [fallback] 兜底文案，而不是空白
+        let lv = level("t15", "", false, "");
+        let sb = failed(vec![err("E9999", 3)]);
+        match validate(&lv, "x", &ErrorMapper::default_fallback(), &sb).unwrap() {
+            Validation::Fail { feedback } => {
+                assert!(feedback[0].contains("E9999（第 3 行）"), "feedback: {feedback:?}");
+                assert!(feedback[0].contains("💡"), "未收录码应走 fallback 中文提示: {feedback:?}");
+                assert!(feedback[0].contains("编译错误"), "fallback 文案: {feedback:?}");
             }
             other => panic!("expected Fail, got {:?}", other),
         }
