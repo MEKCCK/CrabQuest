@@ -54,6 +54,10 @@ impl ErrorMapper {
                 "E0106".to_string(),
                 ErrorInfo { zh: "缺少生命周期标注：需要为引用显式标注生命周期".into(), link: "https://doc.rust-lang.org/error_codes/E0106.html".into() },
             ),
+            (
+                "EUNKNOWN".to_string(),
+                ErrorInfo { zh: "这是一个编译错误（rustc 未提供错误码）。请对照报错原文，检查最近的改动（如 println! 格式参数、语法拼写）".into(), link: "https://doc.rust-lang.org/error_codes/index.html".into() },
+            ),
         ]);
         Self { map }
     }
@@ -98,5 +102,14 @@ link = "https://doc.rust-lang.org/error_codes/E0502.html"
         assert!(m.lookup("E0502").is_some());
         assert!(m.lookup("E0596").is_some());
         assert!(m.lookup("E0106").is_some());
+    }
+
+    #[test]
+    fn fallback_has_eunknown() {
+        // P1-01：无 E 码错误必须有兜底中文文案
+        let m = ErrorMapper::default_fallback();
+        let e = m.lookup("EUNKNOWN").expect("EUNKNOWN 必须存在于兜底表");
+        assert!(e.zh.contains("编译错误"), "zh: {}", e.zh);
+        assert!(e.link.starts_with("https://"));
     }
 }
