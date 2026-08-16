@@ -244,9 +244,14 @@ impl GameUi {
                 ));
             });
             ui.label(&d.level.description);
-            if d.show_hint && !d.level.hint.is_empty() {
+            if let Some((text, cur, total)) = d.visible_hint() {
                 ui.add_space(4.0);
-                ui.colored_label(egui::Color32::from_rgb(255, 200, 80), format!("💡 {}", d.level.hint));
+                let label = if total > 1 {
+                    format!("💡 提示 {cur}/{total}: {text}")
+                } else {
+                    format!("💡 {text}")
+                };
+                ui.colored_label(egui::Color32::from_rgb(255, 200, 80), label);
             }
             ui.separator();
             ui.horizontal(|ui| {
@@ -291,7 +296,11 @@ impl GameUi {
                 if ui.button("▶ 提交运行").clicked() {
                     self.busy = Busy::Show;
                 }
-                if ui.button("💡 提示").clicked() {
+                let hint_label = match d.visible_hint() {
+                    Some((_, cur, total)) if total > 1 => format!("💡 提示 {cur}/{total}"),
+                    _ => "💡 提示".to_owned(),
+                };
+                if ui.button(hint_label).clicked() {
                     self.act(app, Input::Hint);
                 }
                 if ui.button("↺ 重置代码").clicked() {
