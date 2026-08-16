@@ -2,8 +2,13 @@
 id = "l0-loop"
 title = "循环范围"
 tier = "l0"
-description = "当前循环计算 1+2+3+4=10，但要求输出 15（1 到 5 的和）。修改循环范围。"
-hint = "1..5 不含 5；使用 1..=5 表示包含端点。"
+description = "当前输出 10，目标输出 15（1 到 5 的和）。涉及概念：循环的范围写法。"
+hint = "范围写法决定循环是否包含端点。"
+hints = [
+  "循环的范围决定遍历哪些数，端点包含与否影响结果。",
+  "当前范围 1..5 不含 5。见 book-cn ch03-05「控制流」：https://rustwiki.org/zh-CN/book/ch03-05-control-flow.html",
+  "for i in 1..=5 {",
+]
 starter_code = '''
 fn main() {
     let mut sum = 0;
@@ -14,4 +19,4 @@ fn main() {
 }
 '''
 expect_output = "15"
-source = "rustlings (loops 系列)"
+source = "自编 (循环范围练习，无原题)"

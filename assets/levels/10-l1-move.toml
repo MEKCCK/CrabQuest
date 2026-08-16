@@ -1,0 +1,32 @@
+[[level]]
+id = "l1-move"
+title = "所有权与可变参数"
+tier = "l1"
+description = "fill_vec 内部要修改传入的向量，但当前代码无法编译。目标输出两行 vec1 的长度与内容。涉及概念：可变绑定。"
+hint = "参数绑定默认不可变，函数体内修改它需要可变性。"
+hints = [
+  "参数绑定默认不可变，函数体内修改它需要可变性。",
+  "错误 E0596 指向 fill_vec 的签名：参数不可变。见 book-cn ch03-01「变量与可变性」：https://rustwiki.org/zh-CN/book/ch03-01-variables-and-mutability.html",
+  "fn fill_vec(mut vec: Vec<i32>) -> Vec<i32>\n参数加 mut，允许内部 push。",
+]
+starter_code = '''
+fn main() {
+    let vec0 = Vec::new();
+    let mut vec1 = fill_vec(vec0);
+    println!("{} has length {} content {:?}", "vec1", vec1.len(), vec1);
+    vec1.push(88);
+    println!("{} has length {} content {:?}", "vec1", vec1.len(), vec1);
+}
+
+fn fill_vec(vec: Vec<i32>) -> Vec<i32> {
+    vec.push(22);
+    vec.push(44);
+    vec.push(66);
+    vec
+}
+'''
+expect_output = '''
+vec1 has length 3 content [22, 44, 66]
+vec1 has length 4 content [22, 44, 66, 88]
+'''
+source = "rustlings (exercises/06_move_semantics/move_semantics1.rs, v6.5.0, MIT，push 改 22/44/66 并补 main 打印)"

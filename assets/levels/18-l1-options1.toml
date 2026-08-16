@@ -1,0 +1,27 @@
+[[level]]
+id = "l1-options1"
+title = "Option：可能有值也可能没有"
+tier = "l1"
+description = "maybe_ice_cream 函数体为空，实际返回 () 与声明的 Option<u16> 不符。目标输出三个时刻的剩余勺数。涉及概念：Option 枚举。"
+hint = "Option 表示可能有值也可能没有值，函数体必须返回声明的类型。"
+hints = [
+  "Option 表示可能有值也可能没有值，函数体必须返回声明的类型。",
+  "E0308 类型不匹配：函数体没有返回 Option<u16>。见 book-cn ch06-01「枚举」：https://rustwiki.org/zh-CN/book/ch06-01-defining-an-enum.html",
+  "if hour_of_day < 22 { Some(5) } else if hour_of_day <= 23 { Some(0) } else { None }\n按时刻返回对应的 Option<u16> 值。",
+]
+starter_code = '''
+// 冰箱里还剩多少冰淇淋：22 点前剩 5 勺，22 点后剩 0 勺，超过 23 点返回 None。
+fn maybe_ice_cream(hour_of_day: u16) -> Option<u16> {
+    // TODO: 补全函数体。
+}
+
+fn main() {
+    println!("{:?}", maybe_ice_cream(12));
+    println!("{:?}", maybe_ice_cream(22));
+    println!("{:?}", maybe_ice_cream(24));
+}
+'''
+expect_output = '''Some(5)
+Some(0)
+None'''
+source = "rustlings (exercises/12_options/options1.rs, v6.5.0, MIT，测试体搬 main：三条断言改 println)"

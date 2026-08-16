@@ -1,0 +1,29 @@
+[[level]]
+id = "l4-drop-underscore"
+title = "下划线模式：移动还是释放"
+tier = "l4"
+description = "S 实现了 Drop。当前代码用 drop(s) 立刻销毁 s，1 先于 2 打印，目标不符。目标输出 21。涉及概念：Drop 与下划线模式。"
+hint = "带下划线但不绑定名字的写法，不会把值移走。"
+hints = [
+  "带下划线但不绑定名字的写法，不会把值移走。",
+  "drop(s) 立即释放；let _ = s 不动，末尾才释放。见 rust-by-example：Drop https://rustwiki.org/zh-CN/rust-by-example/trait/drop.html",
+  "let _ = s;\n把 drop(s) 换成不绑定名字的下划线模式，s 不再被立即移动销毁。",
+]
+starter_code = '''
+struct S;
+
+impl Drop for S {
+    fn drop(&mut self) {
+        print!("1");
+    }
+}
+
+fn main() {
+    let s = S;
+    drop(s);
+    print!("2");
+}
+'''
+expect_output = "21"
+source = "rust-quiz (questions/019-dropped-by-underscore.rs, CC BY-SA 4.0，解释自写)"
+link = "https://dtolnay.github.io/rust-quiz/019"

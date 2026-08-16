@@ -1,0 +1,19 @@
+[[level]]
+id = "l2-vec"
+title = "数组越界 panic"
+tier = "l2"
+description = "程序运行时会 panic：访问了向量范围外的下标。目标输出 3。涉及概念：Vec 下标访问。"
+hint = "向量元素从 0 开始编号，最大有效下标是长度减一。"
+hints = [
+  "向量下标从 0 开始，越界访问会触发 panic。",
+  "运行期 panic：len 为 3 而下标为 3。见 book-cn ch08-01「使用 Vector 存储列表」：https://rustwiki.org/zh-CN/book/ch08-01-vectors.html",
+  "println!(\"{}\", v[2]);\n目标元素 3 在下标 2 处。",
+]
+starter_code = '''
+fn main() {
+    let v = vec![1, 2, 3];
+    println!("{}", v[3]);
+}
+'''
+expect_output = "3"
+source = "自编 (Vec 下标越界练习，无原题)"

@@ -1,0 +1,23 @@
+[[level]]
+id = "l0-integers"
+title = "整数类型：u8 与 u32"
+tier = "l0"
+description = "Rust 不会自动转换整数类型。compute 中 u8 与 u32 相乘导致类型不匹配，无法编译。目标输出 1 + 2 * 4 = 9。涉及概念：整数类型。"
+hint = "Rust 不做隐式整数类型转换，运算两侧的类型必须一致。"
+hints = [
+  "Rust 不做隐式整数类型转换，运算两侧的类型必须一致。",
+  "E0308：b * factor 里 b 是 u32、factor 是 u8。见 book-cn ch03-02：https://rustwiki.org/zh-CN/book/ch03-02-data-types.html",
+  "let factor: u32 = 4;\n把类型改成与 b 一致的 u32，乘法即可通过。",
+]
+starter_code = '''
+fn compute(a: u32, b: u32) -> u32 {
+    let factor: u8 = 4;
+    a + b * factor
+}
+
+fn main() {
+    println!("1 + 2 * 4 = {}", compute(1, 2));
+}
+'''
+expect_output = "1 + 2 * 4 = 9"
+source = "100-exercises-to-learn-rust (exercises/02_basic_calculator/01_integers/src/lib.rs, CC BY-NC 4.0，结构借鉴/代码重写，R1 改写：测试搬 main)"

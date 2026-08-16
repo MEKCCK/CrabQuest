@@ -1,0 +1,31 @@
+[[level]]
+id = "l3-lifetime1"
+title = "生命周期：函数的引用参数"
+tier = "l3"
+description = "longest 的参数与返回值都是 &str 引用，但缺少生命周期标注，无法编译。目标输出两行字符串 abcd 与 1234。涉及概念：函数生命周期标注。"
+hint = "返回的引用来自参数，需要生命周期参数把它们关联起来。"
+hints = [
+  "返回的引用来自参数，需要生命周期参数把它们关联起来。",
+  "E0106：longest 返回 x 或 y，无法推断返回引用生命周期。见 book-cn ch10-03「生命周期」：https://rustwiki.org/zh-CN/book/ch10-03-lifetime-syntax.html",
+  "fn longest<'a>(x: &'a str, y: &'a str) -> &'a str\n三个 & 都标注同一个生命周期参数 'a。",
+]
+starter_code = '''
+// TODO: 修改函数签名，为参数与返回值补上生命周期标注。
+fn longest(x: &str, y: &str) -> &str {
+    if x.len() > y.len() {
+        x
+    } else {
+        y
+    }
+}
+
+fn main() {
+    println!("{}", longest("abcd", "123"));
+    println!("{}", longest("abc", "1234"));
+}
+'''
+expect_output = '''
+abcd
+1234
+'''
+source = "rustlings (exercises/16_lifetimes/lifetimes1.rs, v6.5.0, MIT，测试体搬 main：assert 改 println)"

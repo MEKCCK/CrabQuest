@@ -1,0 +1,30 @@
+[[level]]
+id = "l0-primitives"
+title = "基础类型：布尔变量"
+tier = "l0"
+description = "布尔变量 is_evening 未定义就被使用，无法编译。定义后程序输出 Good morning!。涉及概念：布尔类型。"
+hint = "变量必须先声明再使用，未声明的名字无法被引用。"
+hints = [
+  "变量必须先声明再使用，未声明的名字无法被引用。",
+  "E0425 找不到名字：if 里的 is_evening 从未定义。见 book-cn ch03-01「变量与可变性」：https://rustwiki.org/zh-CN/book/ch03-01-variables-and-mutability.html",
+  "let is_evening = !is_morning;\n用 ! 取反布尔值并绑定为新变量。",
+]
+starter_code = '''
+// 布尔类型（bool）
+
+fn main() {
+    let is_morning = true;
+    if is_morning {
+        println!("Good morning!");
+    }
+
+    // TODO: 在下面的 if 语句之前定义一个名为 is_evening 的布尔变量。
+    // 它的值应为 is_morning 的相反（取反）值。
+    // let ...
+    if is_evening {
+        println!("Good evening!");
+    }
+}
+'''
+expect_output = "Good morning!"
+source = "rustlings (exercises/04_primitive_types/primitive_types1.rs, v6.5.0, MIT，注释中文化)"

@@ -1,0 +1,31 @@
+[[level]]
+id = "l4-lazy-map"
+title = "惰性迭代器：map 何时执行"
+tier = "l4"
+description = "map 的闭包只在消费时执行。当前代码用 collect 立刻收进 Vec，闭包先全部跑完再打印奇偶，目标不符。目标输出 112031。涉及概念：惰性求值。"
+hint = "迭代器的方法大多是惰性的，真正驱动计算的是消费动作。"
+hints = [
+  "迭代器的方法大多是惰性的，真正驱动计算的是消费动作。",
+  "collect 立即跑完 map，输出 123101；需改惰性消费。见 rust-by-example 迭代器：https://rustwiki.org/zh-CN/rust-by-example/trait/iter.html",
+  "let parity = input.iter().map(|x| {...});\n去掉 .collect() 与 Vec 类型标注，让 parity 保持惰性迭代器。",
+]
+starter_code = '''
+fn main() {
+    let input = vec![1, 2, 3];
+
+    let parity: Vec<u32> = input
+        .iter()
+        .map(|x| {
+            print!("{}", x);
+            x % 2
+        })
+        .collect();
+
+    for p in parity {
+        print!("{}", p);
+    }
+}
+'''
+expect_output = "112031"
+source = "rust-quiz (questions/026-iterator-lazy-map.rs, CC BY-SA 4.0，解释自写)"
+link = "https://dtolnay.github.io/rust-quiz/026"

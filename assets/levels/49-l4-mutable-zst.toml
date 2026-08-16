@@ -1,0 +1,24 @@
+[[level]]
+id = "l4-mutable-zst"
+title = "挑战：可变零大小类型"
+tier = "l4"
+kind = "quiz"
+description = "前置：零大小类型（ZST）运行时占 0 字节，其引用可以指向同一地址且不破坏内存安全。请看展示代码，程序运行后会输出什么？"
+hints = [
+  "思考：零大小类型（ZST）运行时占几个字节？这会影响两个引用指向的地址。",
+  "两个可变引用能否指向同一地址？见 book-cn ch04-02「引用与借用」：https://rustwiki.org/zh-CN/book/ch04-02-references-and-borrowing.html",
+  "println!(\"{}\", std::mem::size_of::<S>());\n零大小类型占 0 字节，两个可变引用指向同一地址，比较相等，输出 1。",
+]
+starter_code = '''
+struct S;
+
+fn main() {
+    let [x, y] = &mut [S, S];
+    let eq = x as *mut S == y as *mut S;
+    print!("{}", eq as u8);
+}
+'''
+options = ["0", "1", "编译错误", "不确定"]
+answer_index = 1
+source = "rust-quiz (questions/013-mutable-zst.rs, CC BY-SA 4.0，解释自写)"
+link = "https://dtolnay.github.io/rust-quiz/013"

@@ -1,0 +1,41 @@
+[[level]]
+id = "l2-errors4"
+title = "错误处理：自定义错误"
+tier = "l2"
+description = "new 目前对负数、0 都返回 Ok，与「非零正整数」语义不符。目标输出三行 Ok/Err 结果。涉及概念：自定义错误与 match。"
+hint = "new 需要检查输入的正负，分别返回不同结果。"
+hints = [
+  "函数应检查输入，非法情况返回 Err 而不是一律 Ok。",
+  "new 总返回 Ok，负数、0 都被放行。见 book-cn ch09-02「可恢复的错误与 Result」：https://rustwiki.org/zh-CN/book/ch09-02-recoverable-errors-with-result.html",
+  "if value > 0 { Ok(Self(value as u64)) }\nelse if value == 0 { Err(CreationError::Zero) }\nelse { Err(CreationError::Negative) }\n按输入正负零分支：正数 Ok，0 与负数返回对应 Err。",
+]
+starter_code = '''
+#[derive(PartialEq, Debug)]
+enum CreationError {
+    Negative,
+    Zero,
+}
+
+#[derive(PartialEq, Debug)]
+struct PositiveNonzeroInteger(u64);
+
+impl PositiveNonzeroInteger {
+    fn new(value: i64) -> Result<Self, CreationError> {
+        // TODO: 负数应返回 Err(CreationError::Negative)，0 应返回 Err(CreationError::Zero)，
+        // 只有正数才返回 Ok。
+        Ok(Self(value as u64))
+    }
+}
+
+fn main() {
+    println!("{:?}", PositiveNonzeroInteger::new(10));
+    println!("{:?}", PositiveNonzeroInteger::new(-10));
+    println!("{:?}", PositiveNonzeroInteger::new(0));
+}
+'''
+expect_output = '''
+Ok(PositiveNonzeroInteger(10))
+Err(Negative)
+Err(Zero)
+'''
+source = "rustlings (exercises/13_error_handling/errors4.rs, v6.5.0, MIT，测试体搬 main：assert 改 println)"
