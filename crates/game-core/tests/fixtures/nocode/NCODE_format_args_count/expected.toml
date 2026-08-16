@@ -1,0 +1,4 @@
+kind = "nocode"
+code = "EUNKNOWN"
+line = 2
+message_contains = "positional arguments in format string"
