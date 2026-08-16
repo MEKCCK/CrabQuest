@@ -1,0 +1,42 @@
+[[level]]
+id = "l2-boss"
+title = "Boss：成绩表综合"
+tier = "l2"
+description = "成绩统计用到 Option、Result 与 match，match 的一个分支类型不符。目标输出 95。涉及概念：Option、Result、match。"
+hint = "match 的每个分支必须返回相同类型。"
+hints = [
+  "match 各分支的返回类型必须一致，失败分支也要返回与成功分支相同的类型。",
+  "E0308：None 分支返回类型不符。见 book-cn ch09-02「可恢复的错误与 Result」：https://rustwiki.org/zh-CN/book/ch09-02-recoverable-errors-with-result.html",
+  "None => 0,\n查不到按 0 处理（与 Some(s) 的 u32 类型一致）；其余代码已正确。",
+]
+starter_code = '''
+use std::collections::HashMap;
+
+// Result：解析成绩字符串，可能失败
+fn parse_score(input: &str) -> Result<u32, std::num::ParseIntError> {
+    input.parse()
+}
+
+// Option：按名字查成绩，可能查不到
+fn find_score(scores: &HashMap<String, u32>, name: &str) -> Option<u32> {
+    scores.get(name).copied()
+}
+
+fn main() {
+    let mut scores = HashMap::new();
+    scores.insert(String::from("小明"), 100);
+    scores.insert(String::from("小红"), 88);
+
+    // match：查到用原成绩，查不到返回"无"
+    let best = match find_score(&scores, "小红") {
+        Some(s) => s,
+        None => "无",
+    };
+    let extra = parse_score("7").unwrap();
+
+    println!("{}", best + extra);
+}
+'''
+expect_output = "95"
+is_boss = true
+source = "自编 (Boss 综合关：Option+Result+match+哈希 map，无原题)"

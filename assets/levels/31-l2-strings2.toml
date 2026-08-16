@@ -1,0 +1,29 @@
+[[level]]
+id = "l2-strings2"
+title = "字符串：传参要借用"
+tier = "l2"
+description = "main 把 String 直接传给期望 &str 的函数，类型不符无法编译。目标输出 green 是颜色词。涉及概念：String 与借用。"
+hint = "传给期望 &str 的参数，需要传字符串的借用。"
+hints = [
+  "字符串有两种形态：可增长的所有权形态与只读借用形态，传参类型要一致。",
+  "E0308：期望 &str 实际是 String。见 book-cn ch08-02「字符串」：https://rustwiki.org/zh-CN/book/ch08-02-strings.html",
+  "if is_color_word(&word) {\n调用处给 word 加 & 借用：函数只读比较，不需要所有权。",
+]
+starter_code = '''
+// 判断字符串是否为颜色词
+fn is_color_word(attempt: &str) -> bool {
+    attempt == "green" || attempt == "blue" || attempt == "red"
+}
+
+fn main() {
+    let word = String::from("green"); // 不要修改这一行
+
+    if is_color_word(word) {
+        println!("{} 是颜色词", word);
+    } else {
+        println!("{} 不是颜色词", word);
+    }
+}
+'''
+expect_output = "green 是颜色词"
+source = "rustlings (exercises/09_strings/strings2.rs, v6.5.0, MIT，分支输出中文化，is_a_color_word 改名 is_color_word)"
