@@ -2,7 +2,8 @@
 id = "l3-trait"
 title = "实现 Trait"
 tier = "l3"
-description = "Rectangle 调用了 r.area()，但 Area trait 还没有为 Rectangle 实现。补上 impl。"
+is_boss = true
+description = "前置回顾：trait 定义方法签名；impl Trait for 类型实现方法；调用方法要求满足 trait bound。\n\nRectangle 调用了 r.area()，但 Area trait 还没有为 Rectangle 实现。补上 impl。"
 hint = "实现 impl Area for Rectangle { fn area(&self) -> u32 { self.width * self.height } }"
 starter_code = '''
 struct Rectangle {

@@ -15,6 +15,8 @@ pub enum Input {
     Reset,
     /// P2-08：复习关卡说明回血（engine.review_lore）
     ReviewLore,
+    /// P3-18：统计页入口（地图 R9+ / 末关庆典）
+    OpenStats,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -88,11 +90,37 @@ pub struct FeedbackData {
     pub xp_gained: u32,
     pub combo: u32,
     pub hearts: u32,
+    /// P3-18：本次通关回血量（0/1；满心时 0），庆典「❤️ +1」提示用
+    pub hearts_gained: u32,
     pub errors: Vec<ErrorCard>,
     pub expectation: Option<OutputDiff>,
     /// panic 分支合成串：「❗ 程序运行崩溃（分类）\n净化消息」（UI 拆首行为标题，其余折叠）
     pub panic: Option<String>,
     pub unlocked_next: Option<String>,
+    /// P3-18：末关庆典（内置全部通关 且 首次触发——victory_celebrated 防重）：
+    /// true → UI 显示「🏆 全部通关！」一次性庆典 + 统计页入口
+    pub victory: bool,
+}
+
+/// P3-18：统计页单关行（读引擎存档快照，UI 只读展示）。
+#[derive(Debug, Clone)]
+pub struct StatsEntry {
+    pub level: Level,
+    pub progress: crate::save::LevelProgress,
+}
+
+/// P3-18：统计页数据（R9 解锁）：段位/心数/XP + 各关尝试/best_time + 成就进度。
+#[derive(Debug, Clone)]
+pub struct StatsData {
+    pub rank: crate::rank::Rank,
+    pub hearts: u32,
+    pub xp: u32,
+    /// 内置已通关数 / 内置总数（段位进度条展示）
+    pub completed: usize,
+    pub total: usize,
+    pub entries: Vec<StatsEntry>,
+    /// (成就 id, 中文名, 是否已解锁)，顺序即图鉴顺序
+    pub achievements: Vec<(String, String, bool)>,
 }
 
 #[derive(Debug, Clone)]
@@ -101,6 +129,8 @@ pub enum Screen {
     ChapterMap(ChapterMapData),
     Level(LevelData),
     Feedback(FeedbackData),
+    /// P3-18：统计页（R9+ 从地图 / 末关庆典进入；Esc/Enter 回地图）
+    Stats(StatsData),
 }
 
 pub struct GameApp {
@@ -124,7 +154,13 @@ impl GameApp {
     pub fn with_custom_load_errors(mut engine: Engine, custom_load_errors: Vec<String>) -> Self {
         engine.unlock_first();
         let screen = Self::build_map(&engine, 0);
-        Self { engine, screen, last_level: None, focus_line: None, custom_load_errors }
+        Self {
+            engine,
+            screen,
+            last_level: None,
+            focus_line: None,
+            custom_load_errors,
+        }
     }
 
     fn build_map(engine: &Engine, selected: usize) -> Screen {
@@ -133,13 +169,24 @@ impl GameApp {
             .levels
             .iter()
             .map(|l| {
-                let state = engine
+                let mut state = engine
                     .save
                     .level_states
                     .get(&l.id)
                     .map(|p| p.state)
                     .unwrap_or(LevelState::Locked);
-                MapEntry { level: l.clone(), state }
+                // P3-18 自由模式（R10）：内置关卡全部显示可玩（存档状态不变，
+                // 统计/成就仍区分「已通关」，仅解锁入口展示）
+                if state == LevelState::Locked
+                    && engine.save.practice_unlock_all
+                    && engine.is_builtin_id(&l.id)
+                {
+                    state = LevelState::Unlocked;
+                }
+                MapEntry {
+                    level: l.clone(),
+                    state,
+                }
             })
             .collect();
         Screen::ChapterMap(ChapterMapData {
@@ -149,8 +196,59 @@ impl GameApp {
         })
     }
 
+    /// P3-18：统计页访问门槛（R9 生命周期贤者 = 内置 13 关通关；R8 12 关不可进）。
+    pub fn stats_accessible(&self) -> bool {
+        crate::rank::rank_for(self.engine.builtin_completed_count()).level >= 9
+    }
+
+    fn build_stats(&self) -> Screen {
+        let completed = self.engine.builtin_completed_count();
+        let rank = crate::rank::rank_for(completed);
+        let entries = self
+            .engine
+            .level_set
+            .levels
+            .iter()
+            .map(|l| {
+                let progress = self
+                    .engine
+                    .save
+                    .level_states
+                    .get(&l.id)
+                    .cloned()
+                    .unwrap_or_default();
+                StatsEntry {
+                    level: l.clone(),
+                    progress,
+                }
+            })
+            .collect();
+        let achievements = crate::achievements::ACHIEVEMENTS
+            .iter()
+            .map(|(id, name)| {
+                (
+                    id.to_string(),
+                    name.to_string(),
+                    self.engine.save.achievements.contains(*id),
+                )
+            })
+            .collect();
+        Screen::Stats(StatsData {
+            rank,
+            hearts: self.engine.save.hearts,
+            xp: self.engine.save.xp,
+            completed,
+            total: self.engine.builtin_count,
+            entries,
+            achievements,
+        })
+    }
+
     fn build_menu(engine: &Engine) -> Screen {
-        Screen::Menu(MenuData { selected: 0, can_continue: engine.can_continue() })
+        Screen::Menu(MenuData {
+            selected: 0,
+            can_continue: engine.can_continue(),
+        })
     }
 
     fn build_level(&mut self, index: usize) -> Result<Screen, GameError> {
@@ -233,17 +331,24 @@ impl GameApp {
             Screen::ChapterMap(m) => self.handle_map(m, input),
             Screen::Level(d) => self.handle_level(d, input),
             Screen::Feedback(f) => self.handle_feedback(f, input),
+            Screen::Stats(s) => self.handle_stats(s, input),
         }
     }
 
     fn handle_menu(&mut self, m: MenuData, input: Input) -> Result<GameFlow, GameError> {
         match input {
             Input::Up => {
-                self.screen = Screen::Menu(MenuData { selected: m.selected.saturating_sub(1), ..m });
+                self.screen = Screen::Menu(MenuData {
+                    selected: m.selected.saturating_sub(1),
+                    ..m
+                });
             }
             Input::Down => {
                 let max = if m.can_continue { 2 } else { 1 };
-                self.screen = Screen::Menu(MenuData { selected: (m.selected + 1).min(max), ..m });
+                self.screen = Screen::Menu(MenuData {
+                    selected: (m.selected + 1).min(max),
+                    ..m
+                });
             }
             Input::Enter => {
                 if m.can_continue {
@@ -274,15 +379,27 @@ impl GameApp {
     fn handle_map(&mut self, m: ChapterMapData, input: Input) -> Result<GameFlow, GameError> {
         match input {
             Input::Up => {
-                self.screen = Screen::ChapterMap(ChapterMapData { selected: m.selected.saturating_sub(1), ..m });
+                self.screen = Screen::ChapterMap(ChapterMapData {
+                    selected: m.selected.saturating_sub(1),
+                    ..m
+                });
             }
             Input::Down => {
                 let max = m.entries.len().saturating_sub(1);
-                self.screen = Screen::ChapterMap(ChapterMapData { selected: (m.selected + 1).min(max), ..m });
+                self.screen = Screen::ChapterMap(ChapterMapData {
+                    selected: (m.selected + 1).min(max),
+                    ..m
+                });
             }
             Input::Enter => {
                 self.engine.start_level(m.selected)?;
                 self.screen = self.build_level(m.selected)?;
+            }
+            // P3-18：统计页入口（R9+ 显示按钮，引擎侧同样校验门槛）
+            Input::OpenStats => {
+                if self.stats_accessible() {
+                    self.screen = self.build_stats();
+                }
             }
             Input::Esc => self.screen = Self::build_menu(&self.engine),
             _ => {}
@@ -293,6 +410,9 @@ impl GameApp {
     fn handle_level(&mut self, d: LevelData, input: Input) -> Result<GameFlow, GameError> {
         match input {
             Input::Submit => {
+                // P3-18：提交前快照（末关庆典一次性判定 + 通关回血量）
+                let hearts_before = self.engine.save.hearts;
+                let was_victory_celebrated = self.engine.save.victory_celebrated;
                 let result = self.engine.submit(&d.code)?;
                 match result {
                     Validation::Pass { xp_gained } => {
@@ -302,36 +422,61 @@ impl GameApp {
                             .next_in_chapter(d.index)
                             .and_then(|n| self.engine.level_set.levels.get(n))
                             .map(|l| l.title.clone());
+                        // P3-18：末关庆典仅首次全通关触发（victory_celebrated 防重，
+                        // 重启后存档标记已置位 → 重玩末关不再庆祝）
+                        let victory = !was_victory_celebrated
+                            && self.engine.builtin_completed_count() == self.engine.builtin_count;
                         self.screen = Screen::Feedback(FeedbackData {
                             passed: true,
                             level_id: d.level.id.clone(),
                             xp_gained,
                             combo: self.engine.save.combo,
                             hearts: self.engine.save.hearts,
+                            hearts_gained: self.engine.save.hearts.saturating_sub(hearts_before),
                             errors: Vec::new(),
                             expectation: None,
                             panic: None,
                             unlocked_next,
+                            victory,
                         });
                     }
-                    Validation::Fail { errors, expectation, panic } => {
+                    Validation::Fail {
+                        errors,
+                        expectation,
+                        panic,
+                    } => {
                         self.screen = Screen::Feedback(FeedbackData {
                             passed: false,
                             level_id: d.level.id.clone(),
                             xp_gained: 0,
                             combo: self.engine.save.combo,
                             hearts: self.engine.save.hearts,
+                            hearts_gained: 0,
                             errors,
                             expectation,
                             // P1-03：panic 合成「标题\n净化消息」（UI 拆首行为标题，其余折叠）
-                            panic: panic.map(|p| format!("❗ 程序运行崩溃（{}）\n{}", p.class_zh, p.message)),
+                            panic: panic.map(|p| {
+                                format!("❗ 程序运行崩溃（{}）\n{}", p.class_zh, p.message)
+                            }),
                             unlocked_next: None,
+                            victory: false,
                         });
                     }
                 }
             }
             Input::Hint => {
                 if let Screen::Level(cur) = &mut self.screen {
+                    // P3-17：Boss 关提示门控——fail_count < 5 时按键忽略（提示默认禁用）
+                    let fail_count = self
+                        .engine
+                        .save
+                        .level_states
+                        .get(&cur.level.id)
+                        .map(|p| p.fail_count)
+                        .unwrap_or(0);
+                    if crate::engine::boss_hint_locked(cur.level.is_boss, fail_count) {
+                        return Ok(GameFlow::Continue);
+                    }
                     if cur.level.hints.is_empty() {
                         // 无多级提示：保持原有开关行为
                         cur.show_hint = !cur.show_hint;
@@ -419,6 +564,21 @@ impl GameApp {
                 }
             }
             Input::Esc => self.screen = Self::build_map(&self.engine, 0),
+            // P3-18：末关庆典的统计页入口（仅庆典展示期可达）
+            Input::OpenStats => {
+                if f.passed && f.victory {
+                    self.screen = self.build_stats();
+                }
+            }
+            _ => {}
+        }
+        Ok(GameFlow::Continue)
+    }
+
+    /// P3-18：统计页（Esc/Enter 回地图；纯展示无选择态）。
+    fn handle_stats(&mut self, _s: StatsData, input: Input) -> Result<GameFlow, GameError> {
+        match input {
+            Input::Esc | Input::Enter => self.screen = Self::build_map(&self.engine, 0),
             _ => {}
         }
         Ok(GameFlow::Continue)
@@ -455,8 +615,15 @@ source = "rustlings"
 "#;
 
     fn app() -> GameApp {
-        let set = LevelSet { levels: parse_levels(LEVELS).unwrap() };
-        let engine = Engine::new(set, Default::default(), ErrorMapper::default_fallback(), Box::new(DevSandbox::new()));
+        let set = LevelSet {
+            levels: parse_levels(LEVELS).unwrap(),
+        };
+        let engine = Engine::new(
+            set,
+            Default::default(),
+            ErrorMapper::default_fallback(),
+            Box::new(DevSandbox::new()),
+        );
         GameApp::new(engine)
     }
 
@@ -495,7 +662,9 @@ source = "rustlings"
         let mut a = app();
         a.handle(Input::Enter).unwrap(); // 进入第一关
         match a.screen() {
-            Screen::Level(d) => assert_eq!(d.code, "fn main() { println!(\"x has the value {}\", 5); }"),
+            Screen::Level(d) => {
+                assert_eq!(d.code, "fn main() { println!(\"x has the value {}\", 5); }")
+            }
             other => panic!("expected Level, got {:?}", other),
         }
         a.handle(Input::Submit).unwrap();
@@ -503,7 +672,10 @@ source = "rustlings"
             Screen::Feedback(f) => {
                 assert!(f.passed);
                 // 首通 + 完美（首次提交即通过）→ 25 + 10（engine award_xp 实算值）
-                assert_eq!(f.xp_gained, crate::engine::XP_PASS + crate::engine::XP_PERFECT);
+                assert_eq!(
+                    f.xp_gained,
+                    crate::engine::XP_PASS + crate::engine::XP_PERFECT
+                );
                 assert_eq!(f.combo, 1, "通过后连击应为 1");
                 assert_eq!(f.hearts, 4, "初始 3 心 + 通关回血 1 → 4");
                 assert_eq!(f.unlocked_next.as_deref(), Some("move"), "应解锁下一关标题");
@@ -579,7 +751,9 @@ source = "rustlings"
         a.set_code("fn main() { println!(\"whatever\"); }".into());
         a.handle(Input::Reset).unwrap();
         match a.screen() {
-            Screen::Level(d) => assert_eq!(d.code, "fn main() { println!(\"x has the value {}\", 5); }"),
+            Screen::Level(d) => {
+                assert_eq!(d.code, "fn main() { println!(\"x has the value {}\", 5); }")
+            }
             other => panic!("expected Level, got {:?}", other),
         }
     }
@@ -605,7 +779,7 @@ source = "rustlings"
     fn review_lore_from_level_heals_once() {
         let mut a = app();
         a.handle(Input::Enter).unwrap(); // 进入第一关
-        // 失败一次 → 3 → 2
+                                         // 失败一次 → 3 → 2
         a.set_code("fn main() { println!(\"wrong\"); }".into());
         a.handle(Input::Submit).unwrap();
         assert_eq!(a.engine.save.hearts, 2);
@@ -669,8 +843,15 @@ source = "rustlings"
 "#;
 
     fn hint_app() -> GameApp {
-        let set = LevelSet { levels: parse_levels(LEVELS_HINTS).unwrap() };
-        let engine = Engine::new(set, Default::default(), ErrorMapper::default_fallback(), Box::new(DevSandbox::new()));
+        let set = LevelSet {
+            levels: parse_levels(LEVELS_HINTS).unwrap(),
+        };
+        let engine = Engine::new(
+            set,
+            Default::default(),
+            ErrorMapper::default_fallback(),
+            Box::new(DevSandbox::new()),
+        );
         GameApp::new(engine)
     }
 
@@ -722,8 +903,15 @@ source = "rustlings"
 "#;
 
     fn single_hint_app() -> GameApp {
-        let set = LevelSet { levels: parse_levels(LEVELS_SINGLE_HINT).unwrap() };
-        let engine = Engine::new(set, Default::default(), ErrorMapper::default_fallback(), Box::new(DevSandbox::new()));
+        let set = LevelSet {
+            levels: parse_levels(LEVELS_SINGLE_HINT).unwrap(),
+        };
+        let engine = Engine::new(
+            set,
+            Default::default(),
+            ErrorMapper::default_fallback(),
+            Box::new(DevSandbox::new()),
+        );
         GameApp::new(engine)
     }
 
@@ -773,8 +961,15 @@ source = "rustlings"
 "#;
 
     fn unlock_hint_app() -> GameApp {
-        let set = LevelSet { levels: parse_levels(LEVELS_HINTS_UNLOCK).unwrap() };
-        let engine = Engine::new(set, Default::default(), ErrorMapper::default_fallback(), Box::new(DevSandbox::new()));
+        let set = LevelSet {
+            levels: parse_levels(LEVELS_HINTS_UNLOCK).unwrap(),
+        };
+        let engine = Engine::new(
+            set,
+            Default::default(),
+            ErrorMapper::default_fallback(),
+            Box::new(DevSandbox::new()),
+        );
         GameApp::new(engine)
     }
 
@@ -791,13 +986,18 @@ source = "rustlings"
     fn hint_input_unlock_mode_toggles_and_records_expanded() {
         let mut a = unlock_hint_app();
         a.handle(Input::Enter).unwrap(); // 进入关卡
-        // fc=1：expanded=0 → 打开面板记录 hint[0]
+                                         // fc=1：expanded=0 → 打开面板记录 hint[0]
         set_fail_count(&mut a, "h-unlock", 1);
         a.handle(Input::Hint).unwrap();
         let d = level_screen(&a);
         assert!(d.show_hint, "联动模式按键打开面板");
         assert_eq!(
-            a.engine.save.level_states.get("h-unlock").unwrap().hints_used,
+            a.engine
+                .save
+                .level_states
+                .get("h-unlock")
+                .unwrap()
+                .hints_used,
             vec![0],
             "打开面板 = 查看当前自动展开的提示"
         );
@@ -806,7 +1006,15 @@ source = "rustlings"
         assert!(!level_screen(&a).show_hint);
         // 重复打开：幂等（已记录不重复）
         a.handle(Input::Hint).unwrap();
-        assert_eq!(a.engine.save.level_states.get("h-unlock").unwrap().hints_used, vec![0]);
+        assert_eq!(
+            a.engine
+                .save
+                .level_states
+                .get("h-unlock")
+                .unwrap()
+                .hints_used,
+            vec![0]
+        );
     }
 
     #[test]
@@ -817,7 +1025,12 @@ source = "rustlings"
         set_fail_count(&mut a, "h-unlock", 4);
         a.handle(Input::Hint).unwrap();
         assert_eq!(
-            a.engine.save.level_states.get("h-unlock").unwrap().hints_used,
+            a.engine
+                .save
+                .level_states
+                .get("h-unlock")
+                .unwrap()
+                .hints_used,
             vec![2],
             "fc≥4 打开面板记录最后一条"
         );
@@ -836,8 +1049,15 @@ source = "rustlings"
         assert_eq!(level_screen(&a).visible_hint(), Some(("第三级提示", 3, 3)));
         a.handle(Input::Hint).unwrap();
         assert!(!level_screen(&a).show_hint);
-        assert!(a.engine.save.level_states.get("h-multi").map(|p| p.hints_used.is_empty()).unwrap_or(true),
-            "手动模式不写 hints_used（保持 P1 行为，不影响 no_hint_perfect）");
+        assert!(
+            a.engine
+                .save
+                .level_states
+                .get("h-multi")
+                .map(|p| p.hints_used.is_empty())
+                .unwrap_or(true),
+            "手动模式不写 hints_used（保持 P1 行为，不影响 no_hint_perfect）"
+        );
     }
 
     #[test]
@@ -851,13 +1071,26 @@ source = "rustlings"
         let d = level_screen(&a);
         assert!(d.reference_revealed, "确认后标记展示参考答案");
         assert_eq!(
-            a.engine.save.level_states.get("h-unlock").unwrap().hints_used,
+            a.engine
+                .save
+                .level_states
+                .get("h-unlock")
+                .unwrap()
+                .hints_used,
             vec![2],
             "参考答案 = 最后一条 hint（解法级修复代码）"
         );
         // 幂等：重复确认不重复记录
         a.reveal_reference();
-        assert_eq!(a.engine.save.level_states.get("h-unlock").unwrap().hints_used, vec![2]);
+        assert_eq!(
+            a.engine
+                .save
+                .level_states
+                .get("h-unlock")
+                .unwrap()
+                .hints_used,
+            vec![2]
+        );
     }
 
     #[test]
@@ -870,7 +1103,16 @@ source = "rustlings"
         a.reveal_reference();
         assert_eq!(a.engine.save.hearts, hearts, "参考答案不扣心");
         assert_eq!(a.engine.save.xp, xp, "参考答案不扣 XP");
-        assert_eq!(a.engine.save.level_states.get("h-unlock").unwrap().fail_count, 4, "fail_count 不变");
+        assert_eq!(
+            a.engine
+                .save
+                .level_states
+                .get("h-unlock")
+                .unwrap()
+                .fail_count,
+            4,
+            "fail_count 不变"
+        );
     }
 
     // ===== P3-19：行号跳转编辑器（app 层状态）=====
@@ -879,7 +1121,7 @@ source = "rustlings"
     fn line_click_returns_to_level_with_focus_and_panel() {
         let mut a = app();
         a.handle(Input::Enter).unwrap(); // 进入第一关
-        // 制造失败反馈
+                                         // 制造失败反馈
         a.set_code("fn main() { println!(\"wrong\"); }".into());
         a.handle(Input::Submit).unwrap();
         assert!(matches!(a.screen(), Screen::Feedback(_)));
@@ -965,7 +1207,9 @@ source = "community"
 "#;
 
     fn custom_app() -> GameApp {
-        let builtin = LevelSet { levels: parse_levels(LEVELS).unwrap() };
+        let builtin = LevelSet {
+            levels: parse_levels(LEVELS).unwrap(),
+        };
         let custom = parse_levels(CUSTOM_LEVEL_TOML).unwrap();
         let engine = Engine::with_custom_levels(
             builtin,
@@ -1020,15 +1264,25 @@ source = "community"
         let p = dir.path().join("save.toml");
         crate::save::save(a.save_ref(), &p).unwrap();
         let loaded = crate::save::load(&p).unwrap();
-        assert_eq!(loaded.level_states.get("c1-hello").unwrap().state, LevelState::Passed);
+        assert_eq!(
+            loaded.level_states.get("c1-hello").unwrap().state,
+            LevelState::Passed
+        );
         // 成就/rank 侧不触发
-        assert!(a.engine.save.achievements.is_empty(), "自定义通关不触发成就");
+        assert!(
+            a.engine.save.achievements.is_empty(),
+            "自定义通关不触发成就"
+        );
         assert_eq!(a.engine.builtin_completed_count(), 0);
         // 通关后 Enter：自定义章节末尾 → 回地图（不越界）
         a.handle(Input::Enter).unwrap();
         match a.screen() {
             Screen::ChapterMap(m) => {
-                assert_eq!(m.entries[2].state, LevelState::Passed, "回地图后自定义关显示已通关");
+                assert_eq!(
+                    m.entries[2].state,
+                    LevelState::Passed,
+                    "回地图后自定义关显示已通关"
+                );
             }
             other => panic!("expected ChapterMap, got {other:?}"),
         }
@@ -1036,7 +1290,9 @@ source = "community"
 
     #[test]
     fn custom_load_errors_carried_into_app() {
-        let builtin = LevelSet { levels: parse_levels(LEVELS).unwrap() };
+        let builtin = LevelSet {
+            levels: parse_levels(LEVELS).unwrap(),
+        };
         let engine = Engine::new(
             builtin,
             Default::default(),
@@ -1048,7 +1304,9 @@ source = "community"
         assert_eq!(a.custom_load_errors, errs);
         // 无错误时 new 等价于空错误列表
         let plain = GameApp::new(Engine::new(
-            LevelSet { levels: parse_levels(LEVELS).unwrap() },
+            LevelSet {
+                levels: parse_levels(LEVELS).unwrap(),
+            },
             Default::default(),
             ErrorMapper::default_fallback(),
             Box::new(DevSandbox::new()),
