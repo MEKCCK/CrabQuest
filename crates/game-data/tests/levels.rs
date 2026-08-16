@@ -109,3 +109,93 @@ fn errors_toml_has_required_codes() {
         assert!(mapper.lookup(code).is_some(), "缺少错误码 {code}");
     }
 }
+
+/// P1-02 验收：活跃条目全部含 zh/link/severity/concept；zh ≤60、fix ≤40、example ≤8 行；
+/// link_zh 仅允许 rustwiki.org 白名单（v3 §6.3）。
+#[test]
+fn errors_toml_v2_entries_complete_and_bounded() {
+    use game_core::validate::mapper::Severity;
+    let mapper = game_core::ErrorMapper::load(&game_data::errors_path()).expect("errors.toml 解析失败");
+    assert!(!mapper.is_empty());
+    for (code, info) in mapper.iter() {
+        assert!(!info.zh.is_empty(), "{code} 缺 zh");
+        assert!(
+            info.link.starts_with("https://doc.rust-lang.org/error_codes/E"),
+            "{code} link 非法: {}",
+            info.link
+        );
+        assert!(
+            matches!(info.severity, Severity::P0 | Severity::P1 | Severity::P2),
+            "{code} severity 非法"
+        );
+        assert!(info.concept.is_some(), "{code} 缺 concept");
+        assert!(info.zh.chars().count() <= 60, "{code} zh 超 60 字: {}", info.zh);
+        if let Some(fix) = &info.fix {
+            assert!(fix.chars().count() <= 40, "{code} fix 超 40 字: {fix}");
+        }
+        if let Some(example) = &info.example {
+            assert!(example.lines().count() <= 8, "{code} example 超 8 行");
+        }
+        if let Some(link_zh) = &info.link_zh {
+            assert!(
+                link_zh.starts_with("https://rustwiki.org/"),
+                "{code} link_zh 非 rustwiki 白名单: {link_zh}"
+            );
+        }
+    }
+}
+
+/// P1-02 验收：新增码 12+ 枚全部收录（这里断言 14 枚全在，活跃条目 ≥32）
+#[test]
+fn errors_toml_has_all_new_entries() {
+    let mapper = game_core::ErrorMapper::load(&game_data::errors_path()).expect("errors.toml 解析失败");
+    let new_codes = [
+        "E0282", "E0384", "E0594", "E0621", "E0601", // P0 5 码
+        "E0506",                                        // P1 borrow 家族
+        "E0046", "E0283", "E0381", "E0603",             // rustlings 缺口
+        "E0072", "E0423",                               // rustlings 缺口 D2
+        "E0063", "E0794",                               // 关卡大纲已收录码
+    ];
+    let active_count = mapper.iter().count();
+    assert!(active_count >= 32, "活跃条目应 ≥32，实际 {active_count}");
+    for code in new_codes {
+        let info = mapper.lookup(code).unwrap_or_else(|| panic!("新增码 {code} 未收录"));
+        assert!(!info.zh.is_empty());
+        assert!(!info.link.is_empty());
+    }
+}
+
+/// P1-02 验收：全部 P0 码（A 组 6 + B 组 5）在活跃表中且 severity=P0
+#[test]
+fn errors_toml_all_p0_codes_present() {
+    use game_core::validate::mapper::Severity;
+    let mapper = game_core::ErrorMapper::load(&game_data::errors_path()).expect("errors.toml 解析失败");
+    for code in [
+        "E0425", "E0596", "E0382", "E0106", "E0599", "E0597",
+        "E0282", "E0384", "E0594", "E0621", "E0601",
+    ] {
+        let info = mapper.lookup(code).unwrap_or_else(|| panic!("缺少 P0 码 {code}"));
+        assert_eq!(info.severity, Severity::P0, "{code} 应为 P0");
+    }
+}
+
+/// P1-02 验收：E0412/E0504 不在活跃查找中，且已在 [deprecated] 登记（注明替代码）
+#[test]
+fn errors_toml_deprecated_codes_absent_and_registered() {
+    let mapper = game_core::ErrorMapper::load(&game_data::errors_path()).expect("errors.toml 解析失败");
+    assert!(mapper.lookup("E0412").is_none(), "E0412 死码不得出现在活跃映射");
+    assert!(mapper.lookup("E0504").is_none(), "E0504 死码不得出现在活跃映射");
+    let r1 = mapper.deprecated_reason("E0412").expect("E0412 应在 [deprecated] 登记");
+    assert!(r1.contains("E0425"), "E0412 登记原因应注明替代码: {r1}");
+    let r2 = mapper.deprecated_reason("E0504").expect("E0504 应在 [deprecated] 登记");
+    assert!(r2.contains("E0506"), "E0504 登记原因应注明替代码: {r2}");
+}
+
+/// P1-02 验收：[fallback] 段解析成功且指向官方错误码索引
+#[test]
+fn errors_toml_has_fallback_section() {
+    let mapper = game_core::ErrorMapper::load(&game_data::errors_path()).expect("errors.toml 解析失败");
+    let fb = mapper.fallback().expect("errors.toml 必须含 [fallback] 段");
+    assert!(!fb.zh.is_empty());
+    assert_eq!(fb.link, "https://doc.rust-lang.org/error_codes/index.html");
+}
