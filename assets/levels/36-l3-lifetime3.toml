@@ -1,0 +1,31 @@
+[[level]]
+id = "l3-lifetime3"
+title = "生命周期：结构体字段的引用"
+tier = "l3"
+description = "Book 结构体的字段是 &str 引用，但结构体没有声明生命周期参数，无法编译。目标输出 1984 by George Orwell。涉及概念：生命周期标注。"
+hint = "持有引用的结构体需要声明生命周期参数。"
+hints = [
+  "结构体持有引用时，必须声明生命周期参数。",
+  "E0106：Book 持有引用，须在结构体上声明生命周期。见 book-cn ch10-03「生命周期」：https://rustwiki.org/zh-CN/book/ch10-03-lifetime-syntax.html",
+  "struct Book<'a> { author: &'a str, title: &'a str }\n声明生命周期参数 'a，字段引用都标注 'a。",
+]
+starter_code = '''
+// 结构体持有引用时也需要生命周期标注。
+
+// TODO: 修复结构体的编译错误。
+struct Book {
+    author: &str,
+    title: &str,
+}
+
+fn main() {
+    let book = Book {
+        author: "George Orwell",
+        title: "1984",
+    };
+
+    println!("{} by {}", book.title, book.author);
+}
+'''
+expect_output = "1984 by George Orwell"
+source = "rustlings (exercises/16_lifetimes/lifetimes3.rs, v6.5.0, MIT，直用)"

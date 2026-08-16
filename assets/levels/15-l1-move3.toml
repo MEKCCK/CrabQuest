@@ -1,0 +1,27 @@
+[[level]]
+id = "l1-move3"
+title = "所有权：参数加 mut"
+tier = "l1"
+description = "fill_vec 的函数体对参数 vec 调用 push，但参数默认不可变，无法编译。目标输出一行向量内容。涉及概念：可变绑定与移动（move）。"
+hint = "参数绑定默认不可变，函数体内要修改它需要声明可变。"
+hints = [
+  "参数绑定默认不可变，函数体内修改它需要可变性。",
+  "E0596 参数借用为可变：push 要求参数本身可变。见 book-cn ch03-01「变量与可变性」：https://rustwiki.org/zh-CN/book/ch03-01-variables-and-mutability.html",
+  "fn fill_vec(mut vec: Vec<i32>) -> Vec<i32>\n参数声明加 mut，允许函数体修改。",
+]
+starter_code = '''
+// TODO: 修复函数中的编译错误（不要新增任何代码行）。
+fn fill_vec(vec: Vec<i32>) -> Vec<i32> {
+    vec.push(88);
+
+    vec
+}
+
+fn main() {
+    let vec0 = vec![22, 44, 66];
+    let vec1 = fill_vec(vec0);
+    println!("{:?}", vec1);
+}
+'''
+expect_output = "[22, 44, 66, 88]"
+source = "rustlings (exercises/06_move_semantics/move_semantics3.rs, v6.5.0, MIT，测试体搬 main：assert 改 println)"
