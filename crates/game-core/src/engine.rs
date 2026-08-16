@@ -1,6 +1,6 @@
 use crate::error::GameError;
 use crate::level::{Level, LevelSet};
-use crate::sandbox::Sandbox;
+use crate::sandbox::{CompileOutcome, Sandbox};
 use crate::save::{LevelProgress, LevelState, SaveData};
 use crate::validate::mapper::ErrorMapper;
 use crate::validate::{validate, Validation};
@@ -78,49 +78,106 @@ impl Engine {
             .get(idx)
             .cloned()
             .ok_or_else(|| GameError::LevelNotFound(format!("index {idx}")))?;
+        if level.kind == "quiz" {
+            return Err(GameError::LevelKindMismatch(
+                "该关卡是选择题（kind=quiz），请通过 submit_quiz 提交选项".into(),
+            ));
+        }
 
         let result = validate(&level, code, &self.mapper, self.sandbox.as_ref())?;
 
         match &result {
-            Validation::Pass => {
-                self.save.xp += XP_PER_PASS;
-                self.save.combo += 1;
-                self.save.max_combo = self.save.max_combo.max(self.save.combo);
-                let entry = self
-                    .save
-                    .level_states
-                    .entry(level.id.clone())
-                    .or_insert_with(|| LevelProgress {
-                        state: LevelState::Unlocked,
-                        attempts: 0,
-                        completed_at: None,
-                    });
-                entry.state = LevelState::Passed;
-                entry.attempts += 1;
-                entry.completed_at = Some(unix_secs());
-                if let Some(next) = self.level_set.levels.get(idx + 1) {
-                    let n = self
-                        .save
-                        .level_states
-                        .entry(next.id.clone())
-                        .or_insert_with(LevelProgress::default);
-                    if n.state == LevelState::Locked {
-                        n.state = LevelState::Unlocked;
-                    }
-                }
-            }
-            Validation::Fail { .. } => {
-                self.save.combo = 0;
-                self.save.total_errors += 1;
-                let entry = self
-                    .save
-                    .level_states
-                    .entry(level.id.clone())
-                    .or_insert_with(LevelProgress::default);
-                entry.attempts += 1;
-            }
+            Validation::Pass => self.record_pass(&level, idx),
+            Validation::Fail { .. } => self.record_fail(&level),
         }
         Ok(result)
+    }
+
+    /// 选择题（kind=quiz）提交：不提交代码，提交选项索引（0-based）。
+    /// 提交前校验展示代码可编译；answer 与 answer_index 相等即通关，
+    /// 通关/失败的 XP/combo/状态记账与普通关完全一致。
+    pub fn submit_quiz(&mut self, answer: u32) -> Result<Validation, GameError> {
+        let idx = self
+            .current
+            .ok_or_else(|| GameError::LevelNotFound("无当前关卡".into()))?;
+        let level = self
+            .level_set
+            .levels
+            .get(idx)
+            .cloned()
+            .ok_or_else(|| GameError::LevelNotFound(format!("index {idx}")))?;
+        if level.kind != "quiz" {
+            return Err(GameError::LevelKindMismatch(
+                "该关卡不是选择题（kind=code），请通过 submit 提交代码".into(),
+            ));
+        }
+        let n = level.options.len();
+        if (answer as usize) >= n {
+            return Err(GameError::QuizAnswerOutOfRange { index: answer, len: n });
+        }
+        // 展示代码须可编译（加载期不编译，提交前实测一次）
+        match self.sandbox.compile(&level.starter_code)? {
+            CompileOutcome::Failed { .. } => {
+                return Err(GameError::LevelDataInvalid(
+                    level.id.clone(),
+                    "quiz 关展示代码无法编译".into(),
+                ));
+            }
+            CompileOutcome::Success { .. } => {}
+        }
+        if level.answer_index == Some(answer) {
+            self.record_pass(&level, idx);
+            Ok(Validation::Pass)
+        } else {
+            self.record_fail(&level);
+            Ok(Validation::Fail {
+                feedback: vec![format!(
+                    "回答错误：输出与你选择的选项「{}」不符。再读一遍展示代码，必要时查看提示。",
+                    level.options[answer as usize]
+                )],
+            })
+        }
+    }
+
+    /// 通关记账：XP/combo/max_combo/状态/完成时间 + 解锁下一关（普通关与 quiz 关共用）
+    fn record_pass(&mut self, level: &Level, idx: usize) {
+        self.save.xp += XP_PER_PASS;
+        self.save.combo += 1;
+        self.save.max_combo = self.save.max_combo.max(self.save.combo);
+        let entry = self
+            .save
+            .level_states
+            .entry(level.id.clone())
+            .or_insert_with(|| LevelProgress {
+                state: LevelState::Unlocked,
+                attempts: 0,
+                completed_at: None,
+            });
+        entry.state = LevelState::Passed;
+        entry.attempts += 1;
+        entry.completed_at = Some(unix_secs());
+        if let Some(next) = self.level_set.levels.get(idx + 1) {
+            let n = self
+                .save
+                .level_states
+                .entry(next.id.clone())
+                .or_insert_with(LevelProgress::default);
+            if n.state == LevelState::Locked {
+                n.state = LevelState::Unlocked;
+            }
+        }
+    }
+
+    /// 失败记账：combo 清零/错误计数/attempts 递增（普通关与 quiz 关共用）
+    fn record_fail(&mut self, level: &Level) {
+        self.save.combo = 0;
+        self.save.total_errors += 1;
+        let entry = self
+            .save
+            .level_states
+            .entry(level.id.clone())
+            .or_insert_with(LevelProgress::default);
+        entry.attempts += 1;
     }
 
     pub fn current_level(&self) -> Option<&Level> {
@@ -251,5 +308,158 @@ source = "rustlings"
         e.start_level(0).unwrap();
         e.submit("fn main() { println!(\"x has the value {}\", 5); }").unwrap();
         assert!(e.can_continue());
+    }
+
+    #[test]
+    fn expect_panic_level_submit_loop() {
+        // expect_panic 关：触发指定 panic → 通关记账（XP/状态）；未触发 → 失败计错
+        let set = LevelSet {
+            levels: parse_levels(
+                "[[level]]\nid = \"l2-panics\"\ntitle = \"制造越界 panic\"\ntier = \"l2\"\ndescription = \"d\"\nstarter_code = \"fn main() {}\"\nexpect_panic = \"index out of bounds\"\nsource = \"自编\"\n",
+            )
+            .unwrap(),
+        };
+        let mut e = Engine::new(set, SaveData::default(), ErrorMapper::default_fallback(), Box::new(DevSandbox::new()));
+        e.new_game();
+        e.start_level(0).unwrap();
+        // 失败：编译通过但未 panic
+        let ok = "fn main() { println!(\"fine\"); }";
+        assert!(matches!(e.submit(ok).unwrap(), Validation::Fail { .. }));
+        assert_eq!(e.save.total_errors, 1);
+        assert_eq!(e.save.level_states.get("l2-panics").unwrap().attempts, 1);
+        // 通过：触发 index out of bounds
+        let panicking = "fn main() { let v = vec![1, 2, 3]; println!(\"{}\", v[3]); }";
+        assert_eq!(e.submit(panicking).unwrap(), Validation::Pass);
+        assert_eq!(e.save.xp, XP_PER_PASS);
+        assert_eq!(e.save.level_states.get("l2-panics").unwrap().state, LevelState::Passed);
+    }
+
+    /// 013-mutable-zst：零大小类型（ZST），两个可变引用可指向同一地址，指针比较相等 → 输出 1
+    const QUIZ_ZST_CODE: &str = r#"struct S;
+
+fn main() {
+    let [x, y] = &mut [S, S];
+    let eq = x as *mut S == y as *mut S;
+    print!("{}", eq as u8);
+}
+"#;
+
+    fn quiz_engine() -> Engine {
+        let set = LevelSet {
+            levels: parse_levels(&format!(
+                r#"
+[[level]]
+id = "l0-hello"
+title = "hello"
+tier = "l0"
+description = "d"
+starter_code = "fn main() {{ x = 5; println!(\"x has the value {{}}\", x); }}"
+expect_output = "x has the value 5"
+source = "rustlings"
+
+[[level]]
+id = "l4-mutable-zst"
+title = "可变零大小类型"
+tier = "l4"
+kind = "quiz"
+description = "d"
+starter_code = '''{starter}'''
+options = ["0", "1", "编译错误", "不确定"]
+answer_index = 1
+source = "rust-quiz (questions/013-mutable-zst.rs, CC BY-SA 4.0，解释自写)"
+"#,
+                starter = QUIZ_ZST_CODE
+            ))
+            .unwrap(),
+        };
+        Engine::new(set, SaveData::default(), ErrorMapper::default_fallback(), Box::new(DevSandbox::new()))
+    }
+
+    #[test]
+    fn quiz_correct_answer_passes_with_xp_and_unlocks_next() {
+        let mut e = quiz_engine();
+        e.new_game();
+        // 先通过第一关解锁 quiz 关
+        e.start_level(0).unwrap();
+        e.submit("fn main() { println!(\"x has the value {}\", 5); }").unwrap();
+        assert_eq!(e.save.xp, XP_PER_PASS);
+        e.start_level(1).unwrap();
+        assert_eq!(e.submit_quiz(1).unwrap(), Validation::Pass);
+        assert_eq!(e.save.xp, XP_PER_PASS * 2);
+        assert_eq!(e.save.combo, 2);
+        assert_eq!(e.save.max_combo, 2);
+        let p = e.save.level_states.get("l4-mutable-zst").unwrap();
+        assert_eq!(p.state, LevelState::Passed);
+        assert_eq!(p.attempts, 1);
+        assert!(p.completed_at.is_some());
+        assert_eq!(e.save.total_errors, 0, "选对不应计入错误");
+    }
+
+    #[test]
+    fn quiz_wrong_answer_fails_resets_combo_and_counts_error() {
+        let mut e = quiz_engine();
+        e.new_game();
+        e.start_level(0).unwrap();
+        e.submit("fn main() { println!(\"x has the value {}\", 5); }").unwrap();
+        assert_eq!(e.save.combo, 1);
+        e.start_level(1).unwrap();
+        let res = e.submit_quiz(0).unwrap();
+        assert!(matches!(res, Validation::Fail { .. }));
+        match res {
+            Validation::Fail { feedback } => assert!(
+                feedback[0].contains("回答错误"),
+                "失败反馈应提示选错: {}",
+                feedback[0]
+            ),
+            _ => unreachable!(),
+        }
+        assert_eq!(e.save.combo, 0);
+        assert_eq!(e.save.total_errors, 1);
+        let p = e.save.level_states.get("l4-mutable-zst").unwrap();
+        assert_eq!(p.attempts, 1);
+        assert_eq!(p.state, LevelState::Unlocked, "选错不改变关卡状态");
+        assert!(p.completed_at.is_none());
+    }
+
+    #[test]
+    fn quiz_out_of_range_answer_rejected() {
+        let mut e = quiz_engine();
+        e.new_game();
+        e.start_level(0).unwrap();
+        e.submit("fn main() { println!(\"x has the value {}\", 5); }").unwrap();
+        e.start_level(1).unwrap();
+        for bad in [4, 99] {
+            assert!(
+                matches!(e.submit_quiz(bad), Err(GameError::QuizAnswerOutOfRange { index, len }) if index == bad && len == 4),
+                "越界选项 {bad} 应被拒绝"
+            );
+        }
+        // 越界提交不记账
+        assert_eq!(e.save.total_errors, 0);
+        assert_eq!(e.save.level_states.get("l4-mutable-zst").unwrap().attempts, 0);
+    }
+
+    #[test]
+    fn quiz_level_rejects_code_submit() {
+        let mut e = quiz_engine();
+        e.new_game();
+        e.start_level(0).unwrap();
+        e.submit("fn main() { println!(\"x has the value {}\", 5); }").unwrap();
+        e.start_level(1).unwrap();
+        assert!(matches!(
+            e.submit("fn main() { println!(\"bypass\"); }"),
+            Err(GameError::LevelKindMismatch(_))
+        ));
+    }
+
+    #[test]
+    fn submit_quiz_on_code_level_rejected() {
+        let mut e = quiz_engine();
+        e.new_game();
+        e.start_level(0).unwrap();
+        assert!(matches!(
+            e.submit_quiz(0),
+            Err(GameError::LevelKindMismatch(_))
+        ));
     }
 }
