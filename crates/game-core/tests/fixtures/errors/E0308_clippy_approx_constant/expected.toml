@@ -1,0 +1,3 @@
+kind = "compile"
+code = "E0308"
+line = 2
