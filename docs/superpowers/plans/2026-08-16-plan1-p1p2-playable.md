@@ -105,6 +105,7 @@ serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 thiserror = "2"
 syn = { version = "2", features = ["full"] }
+rustc_lexer = "0.1"
 tempfile = "3"
 
 [dev-dependencies]
@@ -1589,18 +1590,33 @@ mod tests {
     }
 
     #[test]
-    fn char_literal_three_chars() {
+    fn char_literal() {
         let code = "let c = 'x';";
         let spans = tokenize(code);
         assert!(spans.iter().any(|s| s.kind == TokenKind::String && &code[s.start..s.end] == "'x'"));
     }
 
     #[test]
-    fn lifetime_not_treated_as_string() {
+    fn lifetime_is_normal_not_string() {
         let code = "fn f<'a>(x: &'a str) -> &'a str { x }";
         let spans = tokenize(code);
-        // 'a 生命周期应被当作普通标点/标识符，不产生 String 片段吞掉整行
         assert!(!spans.iter().any(|s| s.kind == TokenKind::String));
+        assert!(spans.iter().any(|s| s.kind == TokenKind::Normal && &code[s.start..s.end] == "'a"));
+    }
+
+    #[test]
+    fn raw_string_supported() {
+        // 原始字符串内嵌引号不会提前终止
+        let code = "let s = r#\"a \\\"b\\\" c\"#;";
+        let spans = tokenize(code);
+        assert!(spans.iter().any(|s| s.kind == TokenKind::String && &code[s.start..s.end] == "r#\"a \\\"b\\\" c\"#"));
+    }
+
+    #[test]
+    fn bool_literal_keyword_colored() {
+        let code = "let b = true;";
+        let spans = tokenize(code);
+        assert!(spans.iter().any(|s| s.kind == TokenKind::Keyword && &code[s.start..s.end] == "true"));
     }
 
     #[test]
@@ -1646,106 +1662,48 @@ const KEYWORDS: &[&str] = &[
     "extern", "macro_rules",
 ];
 
-/// 轻量 Rust 词法器：输出带字节偏移的着色片段。
-/// 局限：原始字符串 r#"..."# 不支持（按普通字符串处理到行尾）；`'\n'` 转义字符按普通处理。
+/// 基于 rustc_lexer（rustc 官方词法器，rust-lang/rust 仓库发布）的着色分词。
+/// 输出字节偏移片段，可直接切片 &code[start..end]。
+/// 支持：注释、原始字符串 r#"..."#、生命周期 'a、全部字面量形式。
 pub fn tokenize(code: &str) -> Vec<TokenSpan> {
-    let chars: Vec<(usize, char)> = code.char_indices().collect();
-    let n = chars.len();
+    use rustc_lexer::{tokenize, LiteralKind, TokenKind as LexKind};
     let mut spans = Vec::new();
-    let mut i = 0;
-    while i < n {
-        let (byte, c) = chars[i];
-        if c.is_whitespace() {
-            i += 1;
-            continue;
-        }
-        // 行注释
-        if c == '/' && i + 1 < n && chars[i + 1].1 == '/' {
-            let start = byte;
-            let mut j = i;
-            while j < n && chars[j].1 != '\n' {
-                j += 1;
-            }
-            let end = if j == n { code.len() } else { chars[j].0 };
-            spans.push(TokenSpan { kind: TokenKind::Comment, start, end });
-            i = j;
-            continue;
-        }
-        // 块注释
-        if c == '/' && i + 1 < n && chars[i + 1].1 == '*' {
-            let start = byte;
-            let mut j = i + 2;
-            while j + 1 < n && !(chars[j].1 == '*' && chars[j + 1].1 == '/') {
-                j += 1;
-            }
-            let end = if j + 1 < n { chars[j + 1].0 + 1 } else { code.len() };
-            spans.push(TokenSpan { kind: TokenKind::Comment, start, end });
-            i = j + 2;
-            continue;
-        }
-        // 字符串
-        if c == '"' {
-            let start = byte;
-            let mut j = i + 1;
-            while j < n {
-                if chars[j].1 == '\\' && j + 1 < n {
-                    j += 2;
-                    continue;
+    let mut pos = 0;
+    for tok in tokenize(code) {
+        let kind = match tok.kind {
+            LexKind::LineComment { .. } | LexKind::BlockComment { .. } => TokenKind::Comment,
+            LexKind::Ident => {
+                let word = &code[pos..pos + tok.len];
+                if KEYWORDS.contains(&word) {
+                    TokenKind::Keyword
+                } else {
+                    TokenKind::Normal
                 }
-                if chars[j].1 == '"' {
-                    j += 1;
-                    break;
-                }
-                j += 1;
             }
-            let end = if j < n { chars[j].0 + 1 } else { code.len() };
-            spans.push(TokenSpan { kind: TokenKind::String, start, end });
-            i = j;
-            continue;
-        }
-        // 字符字面量 'x'（三字符）；生命周期 'a 或撇号走普通分支
-        if c == '\'' && i + 2 < n && chars[i + 2].1 == '\'' {
-            let end = chars[i + 2].0 + 1;
-            spans.push(TokenSpan { kind: TokenKind::String, start: byte, end });
-            i += 3;
-            continue;
-        }
-        // 数字
-        if c.is_ascii_digit() {
-            let start = byte;
-            let mut j = i;
-            while j < n && (chars[j].1.is_ascii_alphanumeric() || chars[j].1 == '_' || chars[j].1 == '.') {
-                j += 1;
+            LexKind::RawIdent | LexKind::Lifetime { .. } => TokenKind::Normal,
+            LexKind::Literal { kind, .. } => match kind {
+                LiteralKind::Str { .. }
+                | LiteralKind::ByteStr { .. }
+                | LiteralKind::RawStr { .. }
+                | LiteralKind::ByteStrRaw { .. }
+                | LiteralKind::CStr { .. }
+                | LiteralKind::Char { .. }
+                | LiteralKind::Byte { .. } => TokenKind::String,
+                LiteralKind::Int { .. } | LiteralKind::Float { .. } => TokenKind::Number,
+                LiteralKind::Bool => TokenKind::Keyword,
+            },
+            LexKind::Whitespace => {
+                pos += tok.len;
+                continue;
             }
-            let end = if j >= n { code.len() } else { chars[j].0 };
-            spans.push(TokenSpan { kind: TokenKind::Number, start, end });
-            i = j;
-            continue;
-        }
-        // 标识符 / 关键字
-        if c.is_alphabetic() || c == '_' {
-            let start = byte;
-            let mut j = i;
-            while j < n && (chars[j].1.is_alphanumeric() || chars[j].1 == '_') {
-                j += 1;
-            }
-            let word: String = chars[i..j].iter().map(|(_, ch)| *ch).collect();
-            let kind = if KEYWORDS.contains(&word.as_str()) { TokenKind::Keyword } else { TokenKind::Normal };
-            let end = if j >= n { code.len() } else { chars[j].0 };
-            spans.push(TokenSpan { kind, start, end });
-            i = j;
-            continue;
-        }
-        // 其他标点/运算符：普通，单字符
-        let end = byte + c.len_utf8();
-        spans.push(TokenSpan { kind: TokenKind::Normal, start: byte, end });
-        i += 1;
+            LexKind::Punct | LexKind::Unknown => TokenKind::Normal,
+            _ => TokenKind::Normal,
+        };
+        spans.push(TokenSpan { kind, start: pos, end: pos + tok.len });
+        pos += tok.len;
     }
     spans
 }
-```
-
-注意：原始字符串 r#"..."# 与转义字符 '\n' 等特殊形式在第一版按普通文本处理（已知局限）。
 
 `crates/game-core/src/lib.rs`（追加）:
 ```rust
