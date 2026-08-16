@@ -262,18 +262,18 @@ fn bwrap_missing_is_explicit_error_not_fallback() {
     assert!(err2.contains("沙盒初始化失败"), "try_new 应失败: {err2}");
 }
 
-// ============ 15 关回归（与 DevSandbox 同一期望画像） ============
+// ============ 全量关卡回归（与 DevSandbox 同一期望画像） ============
 
-/// 15 关 starter 经 BwrapSandbox 编译/运行画像与 DevSandbox 完全一致
+/// 全部 starter 经 BwrapSandbox 编译/运行画像与 DevSandbox 完全一致
 /// （check_level 沙盒实现无关，单一事实源在 tests/common/mod.rs）。
 #[test]
-fn bwrap_15_levels_starter_regression() {
+fn bwrap_all_levels_starter_regression() {
     let Some(sb) = sb_or_skip() else { return };
     let set = LevelSet::load(&assets_levels_dir()).expect("加载 assets/levels 失败");
     assert_eq!(
         set.len(),
-        15,
-        "关卡数应为 15（新增关卡必须同步更新 starter_expect 期望表）"
+        55,
+        "当前关卡集应为 55 关"
     );
     let mut failures: Vec<String> = Vec::new();
     for lv in &set.levels {
