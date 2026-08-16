@@ -1,0 +1,34 @@
+[[level]]
+id = "l4-lifetime-ext"
+title = "临时值延长：let 与赋值语句"
+tier = "l4"
+description = "&Drop0 产生临时值，释放时机由所在语句决定。当前两个块都输出 0 在前、1 在后，与目标不符。目标输出 1001。涉及概念：临时值生命周期延长。"
+hint = "临时值的存活时间取决于它出现在哪类语句里。"
+hints = [
+  "临时值的存活时间取决于它出现在哪类语句里。",
+  "let 中的借用让临时值活到块结束；赋值语句则在语句末就释放。见 rust-by-example 生命周期：https://rustwiki.org/zh-CN/rust-by-example/scope/lifetime.html",
+  "let _ = &Drop0;\n把第一个块改成 let 绑定形式，借用操作数触发生命周期延长。",
+]
+starter_code = '''
+struct Drop0;
+
+impl Drop for Drop0 {
+    fn drop(&mut self) {
+        print!("0");
+    }
+}
+
+fn main() {
+    {
+        _ = &Drop0;
+        print!("1");
+    }
+    {
+        _ = &Drop0;
+        print!("1");
+    }
+}
+'''
+expect_output = "1001"
+source = "rust-quiz (questions/037-lifetime-extension.rs, CC BY-SA 4.0，解释自写)"
+link = "https://dtolnay.github.io/rust-quiz/037"
