@@ -178,6 +178,6 @@ fn tier3_l0_print_feedback_non_empty() {
                 "应展示无码错误文案或硬兜底文案: {feedback:?}"
             );
         }
-        Validation::Pass => panic!("broken starter 不应 Pass"),
+        Validation::Pass { .. } => panic!("broken starter 不应 Pass"),
     }
 }

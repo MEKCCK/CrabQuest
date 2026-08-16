@@ -329,7 +329,7 @@ fn tier2_plan_a_clippy_level_end_to_end() {
 
     // broken starter（clippy 改写版）→ allow_compile_fail 判定通过（首条码 E0308 命中）
     match validate(lv, &lv.starter_code, &mapper, &sb).unwrap() {
-        Validation::Pass => {}
+        Validation::Pass { .. } => {}
         other => panic!("broken starter 应判定通过，实际 {other:?}"),
     }
 
