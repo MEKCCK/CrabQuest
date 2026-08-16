@@ -1,0 +1,7 @@
+[workspace]
+resolver = "2"
+members = ["crates/game-core", "crates/game-ui", "crates/game-data"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"

@@ -1,0 +1,10 @@
+[package]
+name = "game-ui"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+game-core = { path = "../game-core" }
+game-data = { path = "../game-data" }
+macroquad = "0.4"
+egui-macroquad = "0.17"
