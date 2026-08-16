@@ -1,0 +1,41 @@
+[[level]]
+id = "l2-errors3"
+title = "错误处理：? 与 main 的返回类型"
+tier = "l2"
+description = "main 里用了 ? 运算符但返回类型是 ()，无法编译。目标输出 You now have 59 tokens.。涉及概念：? 与 Result 返回类型。"
+hint = "? 运算符要求所在函数返回 Result 类型。"
+hints = [
+  "? 运算符负责向上传播错误，只能在返回 Result 的函数中使用。",
+  "E0277：? 要求函数返回 Result，main 返回 ()。见 book-cn ch09-02「可恢复的错误与 Result」：https://rustwiki.org/zh-CN/book/ch09-02-recoverable-errors-with-result.html",
+  "fn main() -> Result<(), ParseIntError> {\n    // ...\n    Ok(())\n}\n签名与结尾：main 返回 Result，末尾补 Ok(())，total_cost 不要改。",
+]
+starter_code = '''
+use std::num::ParseIntError;
+
+// 不要修改这个函数。
+fn total_cost(item_quantity: &str) -> Result<i32, ParseIntError> {
+    let processing_fee = 1;
+    let cost_per_item = 5;
+    let qty = item_quantity.parse::<i32>()?;
+
+    Ok(qty * cost_per_item + processing_fee)
+}
+
+// TODO: 修改 main 的签名与结尾，让 ? 运算符合法。
+fn main() {
+    let mut tokens = 100;
+    let pretend_user_input = "8";
+
+    // 不要修改这一行。
+    let cost = total_cost(pretend_user_input)?;
+
+    if cost > tokens {
+        println!("You can't afford that many!");
+    } else {
+        tokens -= cost;
+        println!("You now have {tokens} tokens.");
+    }
+}
+'''
+expect_output = "You now have 59 tokens."
+source = "rustlings (exercises/13_error_handling/errors3.rs, v6.5.0, MIT，注释中文化)"

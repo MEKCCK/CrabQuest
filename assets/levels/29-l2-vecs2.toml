@@ -1,0 +1,30 @@
+[[level]]
+id = "l2-vecs2"
+title = "Vec：遍历并收集"
+tier = "l2"
+description = "vec_loop 的循环体为空，output 直接返回空向量。目标输出 [4, 8, 12, 16, 20]。涉及概念：Vec 遍历与 push。"
+hint = "循环体内要把每个元素乘以 2 后放进 output。"
+hints = [
+  "循环遍历每个元素，把计算结果收集进向量。",
+  "代码能编译但输出 []：循环体没有收集任何元素。见 book-cn ch08-01「使用 Vector 存储列表」：https://rustwiki.org/zh-CN/book/ch08-01-vectors.html",
+  "output.push(2 * element);\n循环体里把每个元素乘以 2 后 push 进 output。",
+]
+starter_code = '''
+fn vec_loop(input: &[i32]) -> Vec<i32> {
+    let mut output = Vec::new();
+
+    for element in input {
+        // TODO: 把 input 中的每个元素乘以 2 后 push 到 output。
+    }
+
+    output
+}
+
+fn main() {
+    let input = [2, 4, 6, 8, 10];
+    let ans = vec_loop(&input);
+    println!("{:?}", ans);
+}
+'''
+expect_output = "[4, 8, 12, 16, 20]"
+source = "rustlings (exercises/05_vecs/vecs2.rs, v6.5.0, MIT，测试体搬 main：assert 改 println)"
