@@ -14,6 +14,10 @@ pub enum GameError {
     LevelNotFound(String),
     #[error("关卡未解锁: {0}")]
     LevelLocked(String),
+    #[error("关卡类型不匹配: {0}")]
+    LevelKindMismatch(String),
+    #[error("选择题选项越界: 提交 {index}（0-based），选项共 {len} 项")]
+    QuizAnswerOutOfRange { index: u32, len: usize },
     #[error("编译超时（超过 {0} 秒）")]
     CompileTimeout(u64),
     #[error("运行超时（超过 {0} 秒）")]
