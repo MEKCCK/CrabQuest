@@ -1,11 +1,13 @@
 pub fn placeholder() {}
 
+pub mod editor;
 pub mod error;
 pub mod level;
 pub mod sandbox;
 pub mod save;
 pub mod validate;
 
+pub use editor::{tokenize, TokenKind, TokenSpan};
 pub use error::GameError;
 pub use level::{Level, LevelSet, LevelTier};
 pub use sandbox::{CompileOutcome, DevSandbox, RunOutcome, Sandbox};
