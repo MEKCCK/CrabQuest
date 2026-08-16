@@ -1,0 +1,25 @@
+[[level]]
+id = "l0-functions2"
+title = "函数签名：参数数量"
+tier = "l0"
+description = "call_me 需要一个 u8 参数，main 调用时未传参，数量不匹配，无法编译。目标输出三行 Ring! Call number。涉及概念：函数签名。"
+hint = "调用函数时，实参的数量和类型必须与函数签名一致。"
+hints = [
+  "调用函数时，实参的数量和类型必须与函数签名一致。",
+  "E0061：call_me 声明了 num: u8，调用时却没传参。见 book-cn ch03-03「函数」：https://rustwiki.org/zh-CN/book/ch03-03-how-functions-work.html",
+  "call_me(3);\n调用时补一个 u8 参数。",
+]
+starter_code = '''
+fn call_me(num: u8) {
+    for i in 0..num {
+        println!("Ring! Call number {}", i + 1);
+    }
+}
+
+fn main() {
+    // TODO: 修复函数调用。
+    call_me();
+}
+'''
+expect_output = "Ring! Call number 1\nRing! Call number 2\nRing! Call number 3"
+source = "rustlings (exercises/02_functions/functions3.rs, v6.5.0, MIT，注释中文化)"

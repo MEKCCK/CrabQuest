@@ -271,3 +271,95 @@ fn t7_l4_boss_level_53_consistent() {
     // 修复点唯一性：starter 里只允许出现一处 &self 方法签名（add），fixed 版由 rustc 实测 E0596
     assert!(l.starter_code.contains("fn add(&self"), "starter 应保留 add(&self) bug");
 }
+
+/// T7（P4-25 Wave 3a）：L0 层补 5 关解析断言（05/06/07/08/09）
+#[test]
+fn t7_l0_levels_parse_ok() {
+    let set = game_core::LevelSet::load(&game_data::levels_dir()).expect("关卡目录加载失败");
+    let t7_l0_ids = [
+        "l0-variables2", // 05 rustlings 01_variables/variables2.rs，E0283
+        "l0-if",         // 06 rustlings 03_if/if1.rs，E0308
+        "l0-primitives", // 07 rustlings 04_primitive_types/primitive_types1.rs，E0425
+        "l0-functions2", // 08 rustlings 02_functions/functions3.rs，E0061
+        "l0-boss",       // 09 自编综合（变量+函数+分支），E0425
+    ];
+    let mut seen = std::collections::HashSet::new();
+    for id in t7_l0_ids {
+        let l = set.get(id).unwrap_or_else(|| panic!("T7 L0 关卡 {id} 缺失"));
+        assert!(!l.starter_code.trim().is_empty(), "{id} starter_code 非空");
+        assert!(!l.source.is_empty(), "{id} source 非空");
+        assert_eq!(l.hints.len(), 3, "{id} hints 应为三级");
+        assert!(seen.insert(id), "{id} id 重复");
+        assert!(!l.allow_compile_fail, "{id} 为普通 code 关");
+    }
+    assert_eq!(seen.len(), t7_l0_ids.len(), "T7 L0 关卡 id 应全局唯一");
+    // 09-l0-boss 按普通综合关处理（is_boss=false），Boss 机制仅 L1-L4 层末关启用（v3 §4.2）
+    let boss = set.get("l0-boss").unwrap();
+    assert_eq!(boss.tier, game_core::LevelTier::L0);
+    assert!(!boss.is_boss, "l0-boss 不应启用 Boss 机制");
+    assert_eq!(boss.expect_output, "总和：15");
+}
+
+/// T7（P4-25 Wave 3a）：L2 层补 4 关解析断言（30/31/32/33）
+#[test]
+fn t7_l2_levels_parse_ok() {
+    let set = game_core::LevelSet::load(&game_data::levels_dir()).expect("关卡目录加载失败");
+    let t7_l2_ids = [
+        "l2-hashmap",  // 30 rustlings 11_hashmaps/hashmaps1.rs，E0425
+        "l2-strings2", // 31 rustlings 09_strings/strings2.rs，E0308
+        "l2-match",    // 32 自编 match 穷尽（少分支），E0004
+        "l2-boss",     // 33 自编 Boss：Option+Result+match，E0308
+    ];
+    let mut seen = std::collections::HashSet::new();
+    for id in t7_l2_ids {
+        let l = set.get(id).unwrap_or_else(|| panic!("T7 L2 关卡 {id} 缺失"));
+        assert_eq!(l.tier, game_core::LevelTier::L2, "{id} tier 应为 l2");
+        assert!(!l.starter_code.trim().is_empty(), "{id} starter_code 非空");
+        assert!(!l.source.is_empty(), "{id} source 非空");
+        assert_eq!(l.hints.len(), 3, "{id} hints 应为三级");
+        assert!(seen.insert(id), "{id} id 重复");
+        assert!(!l.allow_compile_fail, "{id} 为普通 code 关");
+    }
+    assert_eq!(seen.len(), t7_l2_ids.len(), "T7 L2 关卡 id 应全局唯一");
+    // 33-l2-boss 为 L2 层末关，启用 Boss 机制（v3 §4.2）
+    let boss = set.get("l2-boss").unwrap();
+    assert!(boss.is_boss, "l2-boss 应为 Boss 关（is_boss=true）");
+    assert_eq!(boss.expect_output, "95");
+}
+
+/// T7（P4-25 Wave 3a）：L1 层补 5 关解析断言（16/17/18/19/21）
+#[test]
+fn t7_l1_levels_parse_ok() {
+    let set = game_core::LevelSet::load(&game_data::levels_dir()).expect("关卡目录加载失败");
+    let t7_l1_ids = [
+        "l1-strings",       // 16 rustlings 09_strings/strings1.rs，E0308
+        "l1-structs",       // 17 rustlings 07_structs/structs1.rs（R1，草稿4），E0063
+        "l1-options1",      // 18 rustlings 12_options/options1.rs，E0308
+        "l1-enums",         // 19 rustlings 08_enums/enums1.rs，E0599
+        "l1-boss",          // 21 自编 Boss：move+borrow+clone，E0596
+    ];
+    let expect_outputs = [
+        "My current favorite color is blue",
+        "(0, 255, 0)",
+        "Some(5)\nSome(0)\nNone",
+        "Resize\nMove\nEcho\nChangeColor\nQuit",
+        "标题：今日计划\n正文：写代码，然后实测",
+    ];
+    let mut seen = std::collections::HashSet::new();
+    for (id, expect) in t7_l1_ids.iter().zip(expect_outputs.iter()) {
+        let l = set.get(id).unwrap_or_else(|| panic!("T7 L1 关卡 {id} 缺失"));
+        assert!(!l.starter_code.trim().is_empty(), "{id} starter_code 非空");
+        assert!(!l.source.is_empty(), "{id} source 非空");
+        assert_eq!(l.hints.len(), 3, "{id} hints 应为三级");
+        assert!(seen.insert(id), "{id} id 重复");
+        assert!(!l.allow_compile_fail, "{id} 为普通 code 关");
+        assert_eq!(l.expect_output, *expect, "{id} expect_output 不一致");
+    }
+    assert_eq!(seen.len(), t7_l1_ids.len(), "T7 L1 关卡 id 应全局唯一");
+    // 21-l1-boss：L1 层末关启用 Boss 机制（v3 §4.2），修复点唯一（let note → let mut note）
+    let boss = set.get("l1-boss").unwrap();
+    assert_eq!(boss.tier, game_core::LevelTier::L1);
+    assert!(boss.is_boss, "l1-boss 应启用 Boss 机制");
+    assert!(boss.source.starts_with("自编"), "source 应标自编");
+    assert!(boss.starter_code.contains("let note ="), "starter 应保留不可变绑定 bug");
+}
