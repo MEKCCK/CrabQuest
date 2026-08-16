@@ -1,0 +1,14 @@
+[[level]]
+id = "l0-hello"
+title = "你好，变量"
+tier = "l0"
+description = "修复代码使其编译：变量在 Rust 中需要用 let 声明。"
+hint = "变量需要 let 声明：let x = 5;"
+starter_code = '''
+fn main() {
+    x = 5;
+    println!("x has the value {}", x);
+}
+'''
+expect_output = "x has the value 5"
+source = "rustlings (variables1)"

@@ -1,0 +1,9 @@
+[package]
+name = "game-data"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+game-core = { path = "../game-core" }
