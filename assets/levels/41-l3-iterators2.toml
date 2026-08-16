@@ -1,0 +1,35 @@
+[[level]]
+id = "l3-iterators2"
+title = "迭代器：消费与收集"
+tier = "l3"
+description = "单词大写函数返回迭代器而非 Vec<String>，编译失败。目标输出 Hello 与首字母大写的单词列表。涉及概念：迭代器消费。"
+hint = "返回类型要求 Vec<String>，需要把迭代器收集成向量。"
+hints = [
+  "迭代器与集合是不同类型，需要消费操作来转换。",
+  "错误 E0308：函数体返回迭代器，与签名 Vec<String> 不符。见 book-cn ch13-02「迭代器」：https://rustwiki.org/zh-CN/book/ch13-02-iterators.html",
+  "words.iter().map(|w| capitalize_first(w)).collect()\ncollect() 把迭代器收集成 Vec<String>。",
+]
+starter_code = '''
+// 首字符转大写后与剩余部分拼接。
+fn capitalize_first(input: &str) -> String {
+    let mut chars = input.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(first) => first.to_uppercase().to_string() + &input[1..],
+    }
+}
+
+// TODO: 对每个单词应用 capitalize_first，收集成 Vec<String>。
+fn capitalize_words_vector(words: &[&str]) -> Vec<String> {
+    words.iter().map(|w| capitalize_first(w))
+}
+
+fn main() {
+    println!("{}", capitalize_first("hello"));
+    let words = vec!["hello", "world"];
+    println!("{:?}", capitalize_words_vector(&words));
+}
+'''
+expect_output = '''Hello
+["Hello", "World"]'''
+source = "rustlings (exercises/18_iterators/iterators2.rs, v6.5.0, MIT，R1 改写：capitalize_first 预先补全，保留缺 collect 的函数体 bug；tests 搬 main)"

@@ -2,12 +2,17 @@
 id = "l0-print"
 title = "格式化输出"
 tier = "l0"
-description = "println! 的占位符 {} 需要对应数量的参数。补上缺失的参数。"
-hint = "三个 {} 需要三个参数，当前只传了两个。"
+description = "代码无法编译：println! 的占位符与参数数量不匹配。目标输出「1 + 2 = 3」。涉及概念：格式化输出。"
+hint = "格式化字符串中的占位符需要与参数一一对应。"
+hints = [
+  "格式化输出中，占位符与参数数量必须一致。",
+  "错误指向 println! 调用：占位符多于参数。见 rust-by-example「打印」：https://rustwiki.org/zh-CN/rust-by-example/hello/print.html",
+  "println!(\"{} + {} = {}\", 1, 2, 1 + 2);",
+]
 starter_code = '''
 fn main() {
     println!("{} + {} = {}", 1, 2);
 }
 '''
 expect_output = "1 + 2 = 3"
-source = "rustlings (print 系列)"
+source = "自编 (格式化输出占位符练习，无原题)"

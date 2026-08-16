@@ -1,0 +1,26 @@
+[[level]]
+id = "l2-panics"
+title = "制造越界 panic"
+tier = "l2"
+description = "程序打印 9 而不是触发运行期错误：越界请求被静默兜底吞掉。目标：让 get 访问越界下标并触发 index out of bounds panic。概念：Vec 下标访问。"
+hints = [
+  "越界访问是运行期错误：下标最大只能到长度减一。",
+  "Rust 的运行时越界检查会让程序 panic 而不是返回越界位置的值，函数应直接访问下标。见 https://rustwiki.org/zh-CN/book/ch08-01-vectors.html",
+  "删掉越界时的兜底分支，直接访问下标：\ndata[i]",
+]
+starter_code = '''
+fn main() {
+    let data = vec![7, 8, 9];
+    println!("{}", get(&data, 3));
+}
+
+fn get(data: &[i32], i: usize) -> i32 {
+    if i < data.len() {
+        data[i]
+    } else {
+        data[data.len() - 1]
+    }
+}
+'''
+expect_panic = "index out of bounds"
+source = "自编 (expect_panic 型：制造 Vec 越界 panic，参考 22-l2-vec 反向设计，无原题)"

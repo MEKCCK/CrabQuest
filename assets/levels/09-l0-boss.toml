@@ -1,0 +1,30 @@
+[[level]]
+id = "l0-boss"
+title = "综合：变量、函数与分支"
+tier = "l0"
+description = "综合关卡：add 计算 x 与 y 的和，分支按结果打印，但输出用了一个未定义的变量，无法编译。目标输出 总和：15。涉及概念：变量、函数、分支。"
+is_boss = false
+hint = "变量必须先声明再使用，打印时引用了一个未声明的名字。"
+hints = [
+  "变量必须先声明再使用，打印时引用了一个未声明的名字。",
+  "E0425：println 里的变量未定义，add 的返回值存在哪个变量？见 book-cn ch03-05「控制流」：https://rustwiki.org/zh-CN/book/ch03-05-control-flow.html",
+  "println!(\"总和：{}\", sum);\n把未定义的变量名改为 sum。",
+]
+starter_code = '''
+fn add(a: i32, b: i32) -> i32 {
+    a + b
+}
+
+fn main() {
+    let x = 5;
+    let y = 10;
+    let sum = add(x, y);
+    if sum >= 10 {
+        println!("总和：{}", total);
+    } else {
+        println!("{}", sum);
+    }
+}
+'''
+expect_output = "总和：15"
+source = "自编 (综合 L0 概念：变量、函数、分支，无原题)"

@@ -1,0 +1,28 @@
+[[level]]
+id = "l1-structs"
+title = "结构体：字段必须齐全"
+tier = "l1"
+description = "结构体 ColorClassicStruct 实例化时漏掉了 blue 字段，无法编译。目标输出三通道颜色 (0, 255, 0)。涉及概念：结构体实例化。"
+hint = "结构体实例化必须为每个字段提供值，缺少任何字段都无法编译。"
+hints = [
+  "结构体实例化必须为每个字段提供值，缺少任何字段都无法编译。",
+  "E0063 缺少字段：实例化时每个字段都要给出值。见 book-cn ch05-01「结构体」：https://rustwiki.org/zh-CN/book/ch05-01-defining-structs.html",
+  "blue: 0,\n实例化处补上遗漏的 blue 字段。",
+]
+starter_code = '''
+struct ColorClassicStruct {
+    red: u8,
+    green: u8,
+    blue: u8,
+}
+
+fn main() {
+    let green = ColorClassicStruct {
+        red: 0,
+        green: 255,
+    };
+    println!("({}, {}, {})", green.red, green.green, green.blue);
+}
+'''
+expect_output = "(0, 255, 0)"
+source = "rustlings (exercises/07_structs/structs1.rs, v6.5.0, MIT，R1 改写：实例化搬 main)"

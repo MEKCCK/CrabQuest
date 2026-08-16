@@ -1,0 +1,39 @@
+[[level]]
+id = "l3-boss"
+title = "Boss：生命周期 + 泛型 + trait"
+tier = "l3"
+description = "Item<T> 持有 &str 引用字段却未声明生命周期参数，编译失败。目标输出 1984: 42。涉及概念：生命周期、泛型与 trait 综合。"
+hint = "持有引用的结构体需要生命周期参数。"
+hints = [
+  "结构体持有引用时，必须声明生命周期参数。",
+  "错误 E0106：name 字段是 &str 引用，结构体须声明生命周期参数。见 book-cn ch10-03「生命周期」：https://rustwiki.org/zh-CN/book/ch10-03-lifetime-syntax.html",
+  "struct Item<'a, T> { name: &'a str, value: T }\n补上生命周期参数 'a，并标注引用字段 name。",
+]
+starter_code = '''
+// Boss 综合关：生命周期 + 泛型 + trait。
+// Summarize trait 声明 summarize 方法，返回类型的摘要文本。
+trait Summarize {
+    fn summarize(&self) -> String;
+}
+
+impl Summarize for i32 {
+    fn summarize(&self) -> String {
+        self.to_string()
+    }
+}
+
+// TODO: Item<T> 持有 &str 引用字段，编译失败。
+struct Item<T> {
+    name: &str,
+    value: T,
+}
+
+fn main() {
+    let title = String::from("1984");
+    let item = Item { name: &title, value: 42 };
+    println!("{}: {}", item.name, item.value.summarize());
+}
+'''
+expect_output = "1984: 42"
+is_boss = true
+source = "自编 (Boss 综合关：生命周期+泛型+trait 三知识点，无原题)"

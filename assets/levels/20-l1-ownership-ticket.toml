@@ -1,0 +1,51 @@
+[[level]]
+id = "l1-ownership-ticket"
+title = "所有权：访问器与移动（move）"
+tier = "l1"
+description = "Ticket 的三个访问器都按值接收 self，第一次调用后结构体被移动（move），后续调用无法编译。目标输出三行：标题、描述、状态。涉及概念：移动与借用。"
+hint = "按值传参会把所有权整个移走，后续访问就失效了。"
+hints = [
+  "按值传参会把所有权整个移走，后续访问就失效了。",
+  "E0382：访问器按值接收 self，调用一次即移动 ticket，再调用就非法。见 book-cn ch04-01：https://rustwiki.org/zh-CN/book/ch04-01-what-is-ownership.html",
+  "fn title(&self) -> String { self.title.clone() }\n访问器改为接收 &self，返回时复制一份，不再移动整个 ticket。",
+]
+starter_code = '''
+struct Ticket {
+    title: String,
+    description: String,
+    status: String,
+}
+
+impl Ticket {
+    fn new(title: String, description: String, status: String) -> Ticket {
+        Ticket { title, description, status }
+    }
+
+    fn title(self) -> String {
+        self.title
+    }
+
+    fn description(self) -> String {
+        self.description
+    }
+
+    fn status(self) -> String {
+        self.status
+    }
+}
+
+fn main() {
+    let ticket = Ticket::new(
+        "周末演唱会".to_string(),
+        "A 区前排".to_string(),
+        "已出票".to_string(),
+    );
+    println!("{}", ticket.title());
+    println!("{}", ticket.description());
+    println!("{}", ticket.status());
+}
+'''
+expect_output = '''周末演唱会
+A 区前排
+已出票'''
+source = "100-exercises-to-learn-rust (exercises/03_ticket_v1/06_ownership/src/lib.rs, CC BY-NC 4.0，结构借鉴/代码重写，R1 改写：测试搬 main)"

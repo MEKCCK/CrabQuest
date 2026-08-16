@@ -1,0 +1,34 @@
+[[level]]
+id = "l4-fnmut-copy"
+title = "闭包：FnMut 与 Copy"
+tier = "l4"
+description = "call 与 g 接收 FnMut 闭包，call(f) 会把 f 移动进函数，后续再使用 f 无法编译。目标输出 1223。涉及概念：闭包与 Copy。"
+hint = "闭包按值捕获后能否复制，取决于捕获的内容是否可复制。"
+hints = [
+  "闭包按值捕获后能否复制，取决于捕获的内容是否可复制。",
+  "E0382：call(f) 把 f 移走；参数加 Copy 约束即可。见 book-cn ch13-01：https://rustwiki.org/zh-CN/book/ch13-01-closures.html",
+  "fn call(mut f: impl FnMut() + Copy) {\n两个函数签名都加上 Copy 约束；i32 捕获让闭包可复制。",
+]
+starter_code = '''
+fn call(mut f: impl FnMut()) {
+    f();
+}
+
+fn g(mut f: impl FnMut()) {
+    f();
+    call(f);
+    f();
+    call(f);
+}
+
+fn main() {
+    let mut i = 0i32;
+    g(move || {
+        i += 1;
+        print!("{}", i);
+    });
+}
+'''
+expect_output = "1223"
+source = "rust-quiz (questions/036-fnmut-copy.rs, CC BY-SA 4.0，解释自写)"
+link = "https://dtolnay.github.io/rust-quiz/036"
