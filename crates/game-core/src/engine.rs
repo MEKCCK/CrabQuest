@@ -92,8 +92,7 @@ impl Engine {
                     .entry(level.id.clone())
                     .or_insert_with(|| LevelProgress {
                         state: LevelState::Unlocked,
-                        attempts: 0,
-                        completed_at: None,
+                        ..LevelProgress::default()
                     });
                 entry.state = LevelState::Passed;
                 entry.attempts += 1;
