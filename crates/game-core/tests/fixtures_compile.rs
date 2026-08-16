@@ -336,8 +336,8 @@ fn tier2_plan_a_clippy_level_end_to_end() {
     // fixed 代码（类型修正 f64）→ allow_compile_fail 分支必须 Fail（“编译成功”）
     let fixed = std::fs::read_to_string(pa.join("fixed.rs")).unwrap();
     match validate(lv, &fixed, &mapper, &sb).unwrap() {
-        Validation::Fail { feedback } => {
-            assert!(feedback[0].contains("编译成功"), "应提示编译成功: {feedback:?}");
+        Validation::Fail { errors, .. } => {
+            assert!(errors[0].zh.contains("编译成功"), "应提示编译成功: {errors:?}");
         }
         other => panic!("fixed 代码应判定 Fail，实际 {other:?}"),
     }

@@ -2,7 +2,7 @@ use crate::engine::Engine;
 use crate::error::GameError;
 use crate::level::Level;
 use crate::save::{LevelState, SaveData};
-use crate::validate::Validation;
+use crate::validate::{ErrorCard, OutputDiff, Validation};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Input {
@@ -50,6 +50,8 @@ pub struct LevelData {
     pub combo: u32,
     pub total: usize,
     pub index: usize,
+    /// P1-03：返回编辑后底部固定的反馈面板（上次提交失败时 Some，底部固定保留）
+    pub feedback: Option<FeedbackData>,
 }
 
 impl LevelData {
@@ -70,12 +72,20 @@ impl LevelData {
     }
 }
 
+/// 结构化反馈面板数据（P1-03 v3 §7.7）：失败分支按
+/// errors（编译错误卡片）/ expectation（输出不符 diff）/ panic（运行崩溃）三选一填充。
 #[derive(Debug, Clone)]
 pub struct FeedbackData {
     pub passed: bool,
     pub level_id: String,
-    pub feedback: Vec<String>,
     pub xp_gained: u32,
+    pub combo: u32,
+    pub hearts: u32,
+    pub errors: Vec<ErrorCard>,
+    pub expectation: Option<OutputDiff>,
+    /// panic 分支合成串：「❗ 程序运行崩溃（分类）\n净化消息」（UI 拆首行为标题，其余折叠）
+    pub panic: Option<String>,
+    pub unlocked_next: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -138,6 +148,7 @@ impl GameApp {
             total: self.engine.level_set.len(),
             index,
             level,
+            feedback: None,
         };
         self.last_level = Some(d.clone());
         Ok(Screen::Level(d))
@@ -227,19 +238,36 @@ impl GameApp {
                 let result = self.engine.submit(&d.code)?;
                 match result {
                     Validation::Pass { xp_gained } => {
+                        let unlocked_next = self
+                            .engine
+                            .level_set
+                            .levels
+                            .get(d.index + 1)
+                            .map(|l| l.title.clone());
                         self.screen = Screen::Feedback(FeedbackData {
                             passed: true,
                             level_id: d.level.id.clone(),
-                            feedback: Vec::new(),
                             xp_gained,
+                            combo: self.engine.save.combo,
+                            hearts: self.engine.save.hearts,
+                            errors: Vec::new(),
+                            expectation: None,
+                            panic: None,
+                            unlocked_next,
                         });
                     }
-                    Validation::Fail { feedback } => {
+                    Validation::Fail { errors, expectation, panic } => {
                         self.screen = Screen::Feedback(FeedbackData {
                             passed: false,
                             level_id: d.level.id.clone(),
-                            feedback,
                             xp_gained: 0,
+                            combo: self.engine.save.combo,
+                            hearts: self.engine.save.hearts,
+                            errors,
+                            expectation,
+                            // P1-03：panic 合成「标题\n净化消息」（UI 拆首行为标题，其余折叠）
+                            panic: panic.map(|p| format!("❗ 程序运行崩溃（{}）\n{}", p.class_zh, p.message)),
+                            unlocked_next: None,
                         });
                     }
                 }
@@ -289,7 +317,10 @@ impl GameApp {
                         self.screen = Self::build_map(&self.engine, 0);
                     }
                 } else if let Some(prev) = self.last_level.clone() {
-                    self.screen = Screen::Level(prev);
+                    // P1-03：返回编辑器，反馈面板底部固定保留
+                    let mut lvl = prev;
+                    lvl.feedback = Some(f);
+                    self.screen = Screen::Level(lvl);
                 } else {
                     self.screen = Self::build_map(&self.engine, 0);
                 }
@@ -380,19 +411,26 @@ source = "rustlings"
                 assert!(f.passed);
                 // 首通 + 完美（首次提交即通过）→ 25 + 10（engine award_xp 实算值）
                 assert_eq!(f.xp_gained, crate::engine::XP_PASS + crate::engine::XP_PERFECT);
+                assert_eq!(f.combo, 1, "通过后连击应为 1");
+                assert_eq!(f.hearts, 3, "初始心数 3");
+                assert_eq!(f.unlocked_next.as_deref(), Some("move"), "应解锁下一关标题");
+                assert!(f.errors.is_empty() && f.expectation.is_none() && f.panic.is_none());
             }
             other => panic!("expected Feedback, got {:?}", other),
         }
         // 回车 → 自动进入下一关
         a.handle(Input::Enter).unwrap();
         match a.screen() {
-            Screen::Level(d) => assert_eq!(d.level.id, "l1-move"),
+            Screen::Level(d) => {
+                assert_eq!(d.level.id, "l1-move");
+                assert!(d.feedback.is_none(), "新关卡不应携带旧反馈面板");
+            }
             other => panic!("expected Level l1-move, got {:?}", other),
         }
     }
 
     #[test]
-    fn fail_keeps_code_and_returns_to_level() {
+    fn fail_keeps_code_and_panel_returns_to_level() {
         let mut a = app();
         a.handle(Input::Enter).unwrap();
         // 写错代码：输出不符
@@ -401,13 +439,42 @@ source = "rustlings"
         match a.screen() {
             Screen::Feedback(f) => {
                 assert!(!f.passed);
-                assert!(!f.feedback.is_empty());
+                assert!(f.expectation.is_some(), "输出不符应携带 OutputDiff");
+                assert!(f.errors.is_empty() && f.panic.is_none());
+                assert_eq!(f.xp_gained, 0);
             }
             other => panic!("expected Feedback fail, got {:?}", other),
         }
         a.handle(Input::Enter).unwrap();
         match a.screen() {
-            Screen::Level(d) => assert_eq!(d.code, "fn main() { println!(\"wrong\"); }"), // 代码保留
+            Screen::Level(d) => {
+                assert_eq!(d.code, "fn main() { println!(\"wrong\"); }"); // 代码保留
+                assert!(d.feedback.is_some(), "返回编辑后反馈面板应保留（底部固定）");
+            }
+            other => panic!("expected Level, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn panel_cleared_when_leaving_level_to_map() {
+        let mut a = app();
+        a.handle(Input::Enter).unwrap();
+        a.set_code("fn main() { println!(\"wrong\"); }".into());
+        a.handle(Input::Submit).unwrap();
+        a.handle(Input::Enter).unwrap(); // 回编辑（带面板）
+        match a.screen() {
+            Screen::Level(d) => assert!(d.feedback.is_some()),
+            other => panic!("expected Level, got {:?}", other),
+        }
+        a.handle(Input::Esc).unwrap(); // 回地图
+        match a.screen() {
+            Screen::ChapterMap(_) => {}
+            other => panic!("expected ChapterMap, got {:?}", other),
+        }
+        // 重新进同一关：面板不应残留（新会话）
+        a.handle(Input::Enter).unwrap();
+        match a.screen() {
+            Screen::Level(d) => assert!(d.feedback.is_none(), "重进关卡面板应清除"),
             other => panic!("expected Level, got {:?}", other),
         }
     }
