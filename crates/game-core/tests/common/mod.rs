@@ -104,6 +104,12 @@ pub fn starter_expect(id: &str) -> StarterExpect {
         "l0-function" => StarterExpect::CompileFail { code: "E0425" },
         // 03-l0-loop：编译通过，输出 10 ≠ 期望 15
         "l0-loop" => StarterExpect::Compiles,
+        "l0-integers" => StarterExpect::CompileFail { code: "E0308" },
+        "l0-variables2" => StarterExpect::CompileFail { code: "E0283" },
+        "l0-if" => StarterExpect::CompileFail { code: "E0308" },
+        "l0-primitives" => StarterExpect::CompileFail { code: "E0425" },
+        "l0-functions2" => StarterExpect::CompileFail { code: "E0061" },
+        "l0-boss" => StarterExpect::CompileFail { code: "E0425" },
         // 04-l1-move：fill_vec 参数非 mut → E0596（F2）
         "l1-move" => StarterExpect::CompileFail { code: "E0596" },
         // 05-l1-borrow：calculate_length 拿走所有权 → E0382（F3）
@@ -112,6 +118,14 @@ pub fn starter_expect(id: &str) -> StarterExpect {
         "l1-mut-borrow" => StarterExpect::CompileFail { code: "E0382" },
         // 07-l1-clone：s2 = s1 后使用 s1 → E0382
         "l1-clone" => StarterExpect::CompileFail { code: "E0382" },
+        "l1-move2" => StarterExpect::CompileFail { code: "E0382" },
+        "l1-move3" => StarterExpect::CompileFail { code: "E0596" },
+        "l1-strings" => StarterExpect::CompileFail { code: "E0308" },
+        "l1-structs" => StarterExpect::CompileFail { code: "E0063" },
+        "l1-options1" => StarterExpect::CompileFail { code: "E0308" },
+        "l1-enums" => StarterExpect::CompileFail { code: "E0599" },
+        "l1-ownership-ticket" => StarterExpect::CompileFail { code: "E0382" },
+        "l1-boss" => StarterExpect::CompileFail { code: "E0596" },
         // 08-l2-vec：编译通过，运行 v[3] 越界 panic → array_index_oob（F14）
         "l2-vec" => StarterExpect::CompilesThenPanic {
             class: "array_index_oob",
@@ -121,15 +135,45 @@ pub fn starter_expect(id: &str) -> StarterExpect {
         // 10-l2-result：main 返回 () 时 `?` 无法展开 → E0277
         // （P3-17 重构 starter 为 `result?` 后仅 1 个预期码；内嵌 FAIL_MSG
         // 中文字面量，P1-06 修订后仍编译失败，仅报 E0277）
-        "l2-result" => StarterExpect::CompileFail { code: "E0277" },
+        "l2-result" => StarterExpect::CompilesThenPanic {
+            class: "unwrap_result_err",
+        },
+        "l2-errors3" => StarterExpect::CompileFail { code: "E0277" },
+        "l2-errors2" => StarterExpect::CompileFail { code: "E0369" },
+        "l2-saturating" => StarterExpect::CompilesThenPanic {
+            class: "integer_overflow",
+        },
+        "l2-errors4" => StarterExpect::Compiles,
+        "l2-vecs2" => StarterExpect::Compiles,
+        "l2-hashmap" => StarterExpect::CompileFail { code: "E0425" },
+        "l2-strings2" => StarterExpect::CompileFail { code: "E0308" },
+        "l2-match" => StarterExpect::CompileFail { code: "E0004" },
+        "l2-boss" => StarterExpect::CompileFail { code: "E0308" },
         // 11-l3-lifetime：longest 缺生命周期标注 → E0106（F4）
         "l3-lifetime" => StarterExpect::CompileFail { code: "E0106" },
         // 12-l3-trait：Rectangle 未实现 area → E0599（F5）
         "l3-trait" => StarterExpect::CompileFail { code: "E0599" },
+        "l3-lifetime3" => StarterExpect::CompileFail { code: "E0106" },
+        "l3-lifetime1" => StarterExpect::CompileFail { code: "E0106" },
+        "l3-generics" => StarterExpect::CompileFail { code: "E0282" },
+        "l3-traits1" => StarterExpect::CompileFail { code: "E0046" },
+        "l3-iterators" => StarterExpect::CompileFail { code: "E0308" },
+        "l3-iterators2" => StarterExpect::CompileFail { code: "E0308" },
+        "l3-conversions" => StarterExpect::CompileFail { code: "E0277" },
+        "l3-enums3" => StarterExpect::Compiles,
+        "l3-boss" => StarterExpect::CompileFail { code: "E0106" },
         // 13-l4-drop-order：编译通过，输出顺序不符（无编译/运行错误）
         "l4-drop-order" => StarterExpect::Compiles,
         // 14-l4-lifetime-trap：借用悬垂 → E0597（F6）
         "l4-lifetime-trap" => StarterExpect::CompileFail { code: "E0597" },
+        "l4-lazy-map" => StarterExpect::Compiles,
+        "l4-fnptr" => StarterExpect::Compiles,
+        "l4-mutable-zst" => StarterExpect::Compiles,
+        "l4-drop-underscore" => StarterExpect::Compiles,
+        "l4-lifetime-ext" => StarterExpect::Compiles,
+        "l4-fnmut-copy" => StarterExpect::CompileFail { code: "E0382" },
+        "l4-boss" => StarterExpect::CompileFail { code: "E0596" },
+        "l2-panics" => StarterExpect::Compiles,
         other => panic!("期望表未覆盖关卡 {other}：新增关卡必须补充期望画像"),
     }
 }

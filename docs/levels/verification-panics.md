@@ -2,7 +2,7 @@
 
 日期：2026-08-16 ｜ rustc 1.97.0 ｜ `--edition 2021`
 
-## 一、54-l2-panics 关（assets/levels/54-l2-panics.toml）
+## 一、32a-l2-panics 关（assets/levels/32a-l2-panics.toml）
 
 关卡：制造「index out of bounds」panic（扩展槽，参考 22-l2-vec 反向设计，素材自编）。
 

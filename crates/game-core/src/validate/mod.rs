@@ -136,6 +136,11 @@ pub fn validate(
     mapper: &ErrorMapper,
     sandbox: &dyn Sandbox,
 ) -> Result<Validation, GameError> {
+    // 选择题没有待编译的玩家代码；`code` 是 Engine::submit_quiz 传入的
+    // 0-based 选项下标。走这里仍使引擎后续的心数/XP/解锁记账保持唯一入口。
+    if level.kind == "quiz" {
+        return Ok(validate_quiz(level, code.parse::<u32>().ok()));
+    }
     let compile = sandbox.compile(code)?;
     match compile {
         CompileOutcome::Failed { errors } => {
@@ -248,6 +253,38 @@ pub fn validate(
                 RunOutcome::Timeout => Err(GameError::RunTimeout(2)),
             }
         }
+    }
+}
+
+/// 判定选择题。未选择与错误选择都给结构化反馈，而不是让玩家看到编译器错误；
+/// schema 已保证 answer_index 与 options 合法，这里仍以安全的 Option 访问处理损坏数据。
+fn validate_quiz(level: &Level, selected: Option<u32>) -> Validation {
+    if selected == level.answer_index {
+        return Validation::Pass { xp_gained: 0 };
+    }
+    let (zh, fix) = match selected {
+        None => (
+            "还没有选择答案。请选择一个选项后再提交。".to_string(),
+            "逐项阅读题目与选项，选择你认为正确的一项。".to_string(),
+        ),
+        Some(index) => (
+            format!("你选择了「{}」，再根据题目中的 Rust 规则想一想。", level.options.get(index as usize).map(String::as_str).unwrap_or("无效选项")),
+            "可以先查看提示，再重新选择。".to_string(),
+        ),
+    };
+    Validation::Fail {
+        errors: vec![ErrorCard {
+            code: "选择题".to_string(),
+            line: None,
+            summary: String::new(),
+            zh,
+            fix,
+            example: None,
+            link: (!level.link.is_empty()).then(|| level.link.clone()),
+            hint_index: None,
+        }],
+        expectation: None,
+        panic: None,
     }
 }
 

@@ -10,5 +10,6 @@ thiserror = "2"
 syn = { version = "2", features = ["full", "visit"] }
 rustc_lexer = "0.1"
 tempfile = "3"
+proc-macro2 = "1"
 
 [dev-dependencies]

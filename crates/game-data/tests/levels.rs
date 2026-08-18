@@ -1,7 +1,7 @@
 #[test]
 fn all_levels_parse_and_consistent() {
     let set = game_core::LevelSet::load(&game_data::levels_dir()).expect("关卡目录加载失败");
-    assert_eq!(set.len(), 15, "第一版应有 15 关");
+    assert_eq!(set.len(), 55, "当前内置关卡集应有 55 关");
     let mut tiers = std::collections::BTreeSet::new();
     for l in &set.levels {
         tiers.insert(l.tier.order());
@@ -12,17 +12,46 @@ fn all_levels_parse_and_consistent() {
         }
     }
     assert_eq!(tiers.len(), 5, "应覆盖 L0-L4 全部难度层");
-    // schema v2 新增字段全部 serde(default)：存量 15 关未写新字段，缺省值一致
+    // 主线按文件名线性解锁，因此加载后的 tier 必须单调递增；尤其不能把 L2
+    // 扩展关排到 L4 终章之后。
+    assert!(
+        set.levels.windows(2).all(|pair| pair[0].tier.order() <= pair[1].tier.order()),
+        "主线难度顺序倒退: {:?}",
+        set.levels
+            .windows(2)
+            .filter(|pair| pair[0].tier.order() > pair[1].tier.order())
+            .map(|pair| format!("{} -> {}", pair[0].id, pair[1].id))
+            .collect::<Vec<_>>()
+    );
+    let panic_index = set
+        .levels
+        .iter()
+        .position(|l| l.id == "l2-panics")
+        .expect("缺少 l2-panics");
+    let l2_boss_index = set
+        .levels
+        .iter()
+        .position(|l| l.id == "l2-boss")
+        .expect("缺少 l2-boss");
+    assert!(panic_index < l2_boss_index, "l2-panics 应在 l2-boss 前完成");
+    // schema v2：代码关不携带选择题字段；选择题必须带合法选项与答案。
+    // 其余 v2 字段（panic / hints / Boss 等）由各关按教学需要使用，不能再假定全部缺省。
+    let mut quiz_count = 0;
     for l in &set.levels {
-        assert_eq!(l.kind, "code", "{} kind 缺省应为 code", l.id);
-        assert!(l.expect_panic.is_empty(), "{} expect_panic 缺省为空", l.id);
-        assert!(l.hint_unlock.is_empty(), "{} hint_unlock 缺省为空", l.id);
-        assert!(!l.is_boss, "{} is_boss 缺省为 false", l.id);
-        assert!(!l.trim_lines, "{} trim_lines 缺省为 false", l.id);
-        assert!(l.options.is_empty(), "{} options 缺省为空", l.id);
-        assert_eq!(l.answer_index, None, "{} answer_index 缺省为 None", l.id);
-        assert!(l.link.is_empty(), "{} link 缺省为空", l.id);
+        match l.kind.as_str() {
+            "code" => {
+                assert!(l.options.is_empty(), "代码关 {} 不应有选择题选项", l.id);
+                assert_eq!(l.answer_index, None, "代码关 {} 不应有正确选项", l.id);
+            }
+            "quiz" => {
+                quiz_count += 1;
+                assert!((2..=6).contains(&l.options.len()), "选择题 {} 选项数非法", l.id);
+                assert!(l.answer_index.is_some(), "选择题 {} 缺少正确选项", l.id);
+            }
+            other => panic!("关卡 {} kind 非法: {other}", l.id),
+        }
     }
+    assert_eq!(quiz_count, 1, "当前素材应恰有 1 个选择题关卡");
 }
 
 /// 把单关 TOML 写入临时目录后走 LevelSet::load 加载路径，返回结果

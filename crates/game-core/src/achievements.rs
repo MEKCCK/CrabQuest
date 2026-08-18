@@ -5,10 +5,6 @@
 use crate::save::LevelProgress;
 use std::collections::{HashMap, HashSet};
 
-/// 已知的 4 个 Boss 关 id（assets/levels 07-l1-clone / 10-l2-result / 12-l3-trait /
-/// 14-l4-lifetime-trap；当前数据尚未标注 is_boss，按 id 表兜底判定）。
-pub const BOSS_LEVEL_IDS: [&str; 4] = ["l1-clone", "l2-result", "l3-trait", "l4-lifetime-trap"];
-
 /// 成就静态表：id → 中文名（v3 §7.4 成就表，顺序即图鉴顺序）。
 pub const ACHIEVEMENTS: [(&str, &str); 10] = [
     ("first_steps", "初出茅庐"),
@@ -28,11 +24,6 @@ pub fn achievement_name(id: &str) -> Option<&'static str> {
     ACHIEVEMENTS.iter().find(|(k, _)| *k == id).map(|(_, n)| *n)
 }
 
-/// id 是否命中已知 Boss 表。
-pub fn is_boss_level_id(id: &str) -> bool {
-    BOSS_LEVEL_IDS.contains(&id)
-}
-
 /// `check_achievements` 的只读入参（存档快照 + 本次通过上下文；纯数据，禁止传 Engine）。
 pub struct AchievementCheck<'a> {
     /// 全部关卡状态（champion / boss 判定按 state==Passed 推导）
@@ -45,6 +36,8 @@ pub struct AchievementCheck<'a> {
     pub seen_error_codes: &'a HashSet<String>,
     /// 关卡总数（champion = 全部通关）
     pub total_levels: usize,
+    /// 内置 Boss 关 id（由关卡数据的 `is_boss` 派生；不把旧的硬编码 id 表带进成就规则）。
+    pub boss_level_ids: &'a HashSet<String>,
     /// 已入账成就（幂等：已满足但已入账 → 不重复返回）
     pub already: &'a HashSet<String>,
     /// 本次 Pass 分支刚通关的关卡：(关卡 id, 该关失败次数, 该关 hints_used 是否为空)
@@ -72,7 +65,11 @@ pub fn check_achievements(c: &AchievementCheck<'_>) -> Vec<String> {
         .map(|(id, _)| id.as_str())
         .collect();
     let passed_count = passed.len();
-    let boss_passed = BOSS_LEVEL_IDS.iter().filter(|id| passed.contains(*id)).count();
+    let boss_passed = c
+        .boss_level_ids
+        .iter()
+        .filter(|id| passed.contains(id.as_str()))
+        .count();
 
     let mut newly = Vec::new();
     let mut unlock = |id: &str, ok: bool| {
@@ -85,7 +82,10 @@ pub fn check_achievements(c: &AchievementCheck<'_>) -> Vec<String> {
     unlock("combo_5", c.combo >= 5);
     unlock("combo_10", c.combo >= 10);
     unlock("boss_slayer", boss_passed >= 1);
-    unlock("boss_all", boss_passed == BOSS_LEVEL_IDS.len());
+    unlock(
+        "boss_all",
+        !c.boss_level_ids.is_empty() && boss_passed == c.boss_level_ids.len(),
+    );
     unlock("error_collector", c.seen_error_codes.len() >= 10);
     unlock("champion", passed_count >= c.total_levels);
 
@@ -117,12 +117,35 @@ mod tests {
         already: &HashSet<String>,
         just_passed: Option<(&str, u32, bool)>,
     ) -> Vec<String> {
+        check_with_bosses(
+            level_states,
+            completed_steps,
+            combo,
+            seen,
+            total,
+            already,
+            &HashSet::new(),
+            just_passed,
+        )
+    }
+
+    fn check_with_bosses(
+        level_states: &HashMap<String, LevelProgress>,
+        completed_steps: &HashSet<String>,
+        combo: u32,
+        seen: &HashSet<String>,
+        total: usize,
+        already: &HashSet<String>,
+        boss_ids: &HashSet<String>,
+        just_passed: Option<(&str, u32, bool)>,
+    ) -> Vec<String> {
         check_achievements(&AchievementCheck {
             level_states,
             completed_steps,
             combo,
             seen_error_codes: seen,
             total_levels: total,
+            boss_level_ids: boss_ids,
             already,
             just_passed,
         })
@@ -197,17 +220,22 @@ mod tests {
         let (mut states, steps, seen, already) = empty();
         // 击败 1 个 Boss → slayer；未集齐 → 无 all
         states.insert("l1-clone".into(), progress(LevelState::Passed));
-        let ids = check(&states, &steps, 1, &seen, 5, &already, None);
+        let boss_ids: HashSet<String> = ["l1-boss", "l2-boss", "l3-boss", "l4-boss"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        states.insert("l1-boss".into(), progress(LevelState::Passed));
+        let ids = check_with_bosses(&states, &steps, 1, &seen, 5, &already, &boss_ids, None);
         assert!(ids.contains(&"boss_slayer".to_string()) && !ids.contains(&"boss_all".to_string()));
         // 全部 4 个 Boss → all
-        for b in BOSS_LEVEL_IDS {
+        for b in &boss_ids {
             states.insert(b.to_string(), progress(LevelState::Passed));
         }
-        let ids = check(&states, &steps, 1, &seen, 5, &already, None);
+        let ids = check_with_bosses(&states, &steps, 1, &seen, 5, &already, &boss_ids, None);
         assert!(ids.contains(&"boss_slayer".to_string()) && ids.contains(&"boss_all".to_string()));
         // 未击败任何 Boss → 都不触发
         let (s2, st2, _, _) = empty();
-        let ids = check(&s2, &st2, 1, &seen, 5, &already, None);
+        let ids = check_with_bosses(&s2, &st2, 1, &seen, 5, &already, &boss_ids, None);
         assert!(!ids.contains(&"boss_slayer".to_string()) && !ids.contains(&"boss_all".to_string()));
     }
 
@@ -252,7 +280,11 @@ mod tests {
     fn already_unlocked_not_repeated() {
         // HashSet 幂等：已入账的成就不再出现在新解锁列表
         let (mut states, mut steps, seen, _) = empty();
-        for b in BOSS_LEVEL_IDS {
+        let boss_ids: HashSet<String> = ["l1-boss", "l2-boss", "l3-boss", "l4-boss"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        for b in &boss_ids {
             states.insert(b.to_string(), progress(LevelState::Passed));
         }
         states.insert("l0-hello".into(), progress(LevelState::Passed));
@@ -261,7 +293,7 @@ mod tests {
             .into_iter()
             .map(String::from)
             .collect();
-        let ids = check(&states, &steps, 10, &seen, 5, &already, None);
+        let ids = check_with_bosses(&states, &steps, 10, &seen, 5, &already, &boss_ids, None);
         assert!(!ids.contains(&"first_steps".to_string()));
         assert!(!ids.contains(&"boss_all".to_string()));
         assert!(!ids.contains(&"champion".to_string()));
@@ -279,7 +311,5 @@ mod tests {
             assert!(!id.is_empty() && !name.is_empty());
         }
         assert_eq!(achievement_name("nope"), None);
-        assert!(is_boss_level_id("l1-clone"));
-        assert!(!is_boss_level_id("l0-hello"));
     }
 }

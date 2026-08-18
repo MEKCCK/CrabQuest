@@ -31,10 +31,7 @@ pub use streak::{
     days_from_civil, is_yesterday, parse_date, previous_day, today_str, touch_streak,
 };
 
-pub use achievements::{
-    achievement_name, check_achievements, is_boss_level_id, AchievementCheck, ACHIEVEMENTS,
-    BOSS_LEVEL_IDS,
-};
+pub use achievements::{achievement_name, check_achievements, AchievementCheck, ACHIEVEMENTS};
 
 pub use ui::UiBackend;
 

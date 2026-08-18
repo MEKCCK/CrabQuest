@@ -1,4 +1,4 @@
-//! Tier 3：关卡回归（P2-16 §3）——15 关 starter 编译断言 + 01-l0-print 反馈非空锁。
+//! Tier 3：关卡回归（P2-16 §3）——55 关 starter 画像断言 + 01-l0-print 反馈非空锁。
 //!
 //! 从 `assets/levels/*.toml` **动态读取** starter_code（不复制代码进测试，防素材
 //! 漂移；T3 中文字面量修订也不影响），用 DevSandbox 真实编译，断言每关 starter 的
@@ -20,14 +20,14 @@ use game_core::validate::error_parser::IssueKind;
 use game_core::validate::mapper::ErrorMapper;
 use game_core::validate::{validate, Validation};
 
-/// Tier 3 主断言：15 关 starter 编译画像（错误码 / 编译成功 / panic 分类）。
+/// Tier 3 主断言：55 关 starter 编译画像（错误码 / 编译成功 / panic 分类）。
 #[test]
 fn tier3_levels_starter_error_codes() {
     let set = LevelSet::load(&assets_levels_dir()).expect("加载 assets/levels 失败");
     assert_eq!(
         set.len(),
-        15,
-        "关卡数应为 15（新增关卡必须同步更新 expect_for 期望表）"
+        55,
+        "关卡数应为 55（新增关卡必须同步更新 starter_expect 期望表）"
     );
     let sb = DevSandbox::new();
     let mut failures: Vec<String> = Vec::new();
