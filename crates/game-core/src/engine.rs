@@ -531,6 +531,11 @@ impl Engine {
         // P4-26：成就只按内置关卡判定——快照过滤自定义 id；total_levels 用内置数；
         // 自定义通关上下文不参与完美类成就判定（combo 已隔离：自定义通关/失败不增减连击）。
         let builtin_ids = self.builtin_ids();
+        let boss_level_ids: HashSet<String> = self.level_set.levels[..self.builtin_count]
+            .iter()
+            .filter(|level| level.is_boss)
+            .map(|level| level.id.clone())
+            .collect();
         let builtin_states: std::collections::HashMap<String, LevelProgress> = self
             .save
             .level_states
@@ -560,6 +565,7 @@ impl Engine {
                 combo: self.save.combo,
                 seen_error_codes: &self.save.seen_error_codes,
                 total_levels: self.builtin_count,
+                boss_level_ids: &boss_level_ids,
                 already: &self.save.achievements,
                 just_passed: builtin_just_passed,
             });
@@ -570,6 +576,32 @@ impl Engine {
             Validation::Pass { .. } => Validation::Pass { xp_gained },
             other => other,
         })
+    }
+
+    /// 提交选择题答案。选择题不编译代码，答案由 `validate` 的 quiz 分支判定；
+    /// 仍复用 `submit` 的心数、尝试次数、XP、成就和解锁事务，避免两套进度规则漂移。
+    pub fn submit_quiz(&mut self, answer: Option<u32>) -> Result<Validation, GameError> {
+        let idx = self
+            .current
+            .ok_or_else(|| GameError::LevelNotFound("无当前关卡".into()))?;
+        let level = self
+            .level_set
+            .levels
+            .get(idx)
+            .ok_or_else(|| GameError::LevelNotFound(format!("index {idx}")))?;
+        if level.kind != "quiz" {
+            return Err(GameError::LevelKindMismatch(level.id.clone()));
+        }
+        if let Some(index) = answer {
+            if index as usize >= level.options.len() {
+                return Err(GameError::QuizAnswerOutOfRange {
+                    index,
+                    len: level.options.len(),
+                });
+            }
+        }
+        let encoded = answer.map(|a| a.to_string()).unwrap_or_default();
+        self.submit(&encoded)
     }
 
     /// P2-08：复习关卡说明回血（每关每局一次，幂等）。
@@ -957,8 +989,8 @@ source = "rustlings"
         // rank 只解锁元内容：关卡线性解锁链不受 rank 影响（v3 §7.3）
         let mut e = engine();
         e.new_game();
-        // 伪造 R10 存档：15 关 Passed
-        for i in 0..15 {
+        // 伪造 R10 存档：55 关 Passed
+        for i in 0..55 {
             let id = format!("fake{i}");
             e.save.level_states.insert(
                 id,
@@ -1227,7 +1259,7 @@ source = "rustlings"
     fn boss_pass_unlocks_boss_slayer() {
         let set = LevelSet {
             levels: parse_levels(
-                "[[level]]\nid = \"l1-clone\"\ntitle = \"boss\"\ntier = \"l1\"\ndescription = \"d\"\nstarter_code = \"fn main() { println!(\\\"1\\\"); }\"\nis_boss = true\nexpect_output = \"1\"\nsource = \"x\"\n",
+                "[[level]]\nid = \"l1-boss\"\ntitle = \"boss\"\ntier = \"l1\"\ndescription = \"d\"\nstarter_code = \"fn main() { println!(\\\"1\\\"); }\"\nis_boss = true\nexpect_output = \"1\"\nsource = \"x\"\n",
             )
             .unwrap(),
         };
@@ -1244,8 +1276,8 @@ source = "rustlings"
         assert!(e.save.achievements.contains("boss_slayer"));
         assert!(e.save.achievements.contains("first_steps"));
         assert!(
-            !e.save.achievements.contains("boss_all"),
-            "单 Boss 不触发屠龙"
+            e.save.achievements.contains("boss_all"),
+            "测试数据中的唯一 Boss 已通关 → 集齐全部配置 Boss"
         );
         assert!(
             e.save.achievements.contains("champion"),
@@ -1256,7 +1288,7 @@ source = "rustlings"
     #[test]
     fn all_four_bosses_unlock_boss_all() {
         let mut toml = String::new();
-        for (i, id) in ["l1-clone", "l2-result", "l3-trait", "l4-lifetime-trap"]
+        for (i, id) in ["l1-boss", "l2-boss", "l3-boss", "l4-boss"]
             .iter()
             .enumerate()
         {
@@ -1925,5 +1957,66 @@ source = "community"
         let loaded = crate::save::load(&p).unwrap();
         assert!(loaded.victory_celebrated, "庆典标记持久化 → 重启后不再庆祝");
         assert!(loaded.practice_unlock_all, "自由模式标记持久化");
+    }
+
+    #[test]
+    fn quiz_submission_uses_choice_without_compiling_and_records_progress() {
+        let quiz = r#"
+[[level]]
+id = "q1"
+title = "quiz"
+tier = "l0"
+description = "d"
+kind = "quiz"
+options = ["错误", "正确"]
+answer_index = 1
+source = "test"
+"#;
+        let mut e = Engine::new(
+            LevelSet { levels: parse_levels(quiz).unwrap() },
+            SaveData::default(),
+            ErrorMapper::default_fallback(),
+            Box::new(DevSandbox::new()),
+        );
+        e.new_game();
+        e.start_level(0).unwrap();
+
+        // 未选择/错误选择均是正常的教学反馈，并和代码关一样计失败扣心。
+        let no_choice = e.submit_quiz(None).unwrap();
+        assert!(matches!(no_choice, Validation::Fail { .. }));
+        assert_eq!(e.save.hearts, 2);
+        assert_eq!(e.save.level_states["q1"].fail_count, 1);
+
+        let passed = e.submit_quiz(Some(1)).unwrap();
+        assert!(matches!(passed, Validation::Pass { .. }));
+        assert_eq!(e.save.level_states["q1"].state, LevelState::Passed);
+        assert!(e.save.xp > 0, "选择题通关应走统一 XP 流程");
+    }
+
+    #[test]
+    fn quiz_submission_rejects_wrong_level_and_out_of_range_answer() {
+        let mut e = engine();
+        e.new_game();
+        e.start_level(0).unwrap();
+        assert!(matches!(e.submit_quiz(Some(0)), Err(GameError::LevelKindMismatch(_))));
+
+        let quiz = r#"
+[[level]]
+id = "q1"
+title = "quiz"
+tier = "l0"
+description = "d"
+kind = "quiz"
+options = ["a", "b"]
+answer_index = 0
+source = "test"
+"#;
+        let mut e = Engine::new(
+            LevelSet { levels: parse_levels(quiz).unwrap() }, SaveData::default(),
+            ErrorMapper::default_fallback(), Box::new(DevSandbox::new()),
+        );
+        e.new_game();
+        e.start_level(0).unwrap();
+        assert!(matches!(e.submit_quiz(Some(2)), Err(GameError::QuizAnswerOutOfRange { .. })));
     }
 }

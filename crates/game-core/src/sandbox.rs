@@ -2,6 +2,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+use proc_macro2::{TokenStream, TokenTree};
+
 use crate::error::GameError;
 use crate::validate::error_parser::{parse_rustc_stderr, CompileError};
 
@@ -78,7 +80,9 @@ fn collect_use_paths(t: &syn::UseTree, segs: &mut Vec<String>, out: &mut Vec<Str
             segs.pop();
         }
         syn::UseTree::Rename(r) => {
-            segs.push(r.rename.to_string());
+            // `rename` 是代码中可见的别名；安全检查必须使用被导入的原始
+            // 符号，否则 `use std::fs as harmless;` 会绕过黑名单。
+            segs.push(r.ident.to_string());
             out.push(segs.join("::"));
             segs.pop();
         }
@@ -93,6 +97,80 @@ fn collect_use_paths(t: &syn::UseTree, segs: &mut Vec<String>, out: &mut Vec<Str
             }
         }
     }
+}
+
+/// 收集 `std::thread` 模块的本地别名。线程模块本身允许导入（sleep/yield_now
+/// 是合法教学 API），但任何别名上的 `spawn` 仍须被精确拦截。
+fn collect_thread_aliases(t: &syn::UseTree, segs: &mut Vec<String>, out: &mut Vec<String>) {
+    match t {
+        syn::UseTree::Path(p) => {
+            segs.push(p.ident.to_string());
+            collect_thread_aliases(&p.tree, segs, out);
+            segs.pop();
+        }
+        syn::UseTree::Name(n) => {
+            segs.push(n.ident.to_string());
+            if segs.join("::") == "std::thread" {
+                out.push(n.ident.to_string());
+            }
+            segs.pop();
+        }
+        syn::UseTree::Rename(r) => {
+            if r.ident == "self" {
+                if segs.join("::") == "std::thread" {
+                    out.push(r.rename.to_string());
+                }
+            } else {
+                segs.push(r.ident.to_string());
+                if segs.join("::") == "std::thread" {
+                    out.push(r.rename.to_string());
+                }
+                segs.pop();
+            }
+        }
+        syn::UseTree::Glob(_) => {}
+        syn::UseTree::Group(g) => {
+            for item in &g.items {
+                collect_thread_aliases(item, segs, out);
+            }
+        }
+    }
+}
+
+/// 宏的内容在 syn AST 中是未展开 token 流，不会触发 ExprPath/TypePath visit。
+/// 在 token 流里只检查标识符和标点，刻意跳过字符串字面量；这保持了
+/// 「注释和字符串提到 std::fs 不误报」的性质，同时不让 macro_rules! 成为绕过口。
+fn blocked_in_macro_tokens(tokens: &TokenStream) -> Option<String> {
+    fn scan(tokens: TokenStream) -> Option<String> {
+        let mut path = String::new();
+        for token in tokens {
+            match token {
+                TokenTree::Ident(ident) => {
+                    let name = ident.to_string();
+                    if name == "unsafe" {
+                        return Some("unsafe 块".to_string());
+                    }
+                    if name == "extern" {
+                        return Some("extern 块".to_string());
+                    }
+                    path.push_str(&name);
+                    if let Some(hit) = blocked_match(&path) {
+                        return Some(hit);
+                    }
+                }
+                TokenTree::Punct(punct) => path.push(punct.as_char()),
+                TokenTree::Group(group) => {
+                    if let Some(hit) = scan(group.stream()) {
+                        return Some(hit);
+                    }
+                    path.clear();
+                }
+                TokenTree::Literal(_) => path.clear(),
+            }
+        }
+        None
+    }
+    scan(tokens.clone())
 }
 
 /// 命中拦截清单则返回要展示的符号；未命中返回 None。
@@ -114,12 +192,41 @@ fn check_blocked_apis(code: &str) -> Result<(), GameError> {
         .map_err(|e| GameError::SandboxBlocked(format!("代码语法错误: {e}")))?;
     let mut blocked: Option<String> = None;
 
+    let mut thread_aliases = Vec::new();
+    for item in &ast.items {
+        if let syn::Item::Use(item_use) = item {
+            collect_thread_aliases(&item_use.tree, &mut Vec::new(), &mut thread_aliases);
+        }
+    }
+
     struct Scan<'a> {
         blocked: &'a mut Option<String>,
+        thread_aliases: &'a [String],
     }
     impl<'ast> syn::visit::Visit<'ast> for Scan<'_> {
         fn visit_expr_path(&mut self, node: &'ast syn::ExprPath) {
-            let s = path_string(&node.path);
+            let mut s = path_string(&node.path);
+            if let Some(first) = node.path.segments.first() {
+                if self
+                    .thread_aliases
+                    .iter()
+                    .any(|alias| alias == &first.ident.to_string())
+                {
+                    let suffix = node
+                        .path
+                        .segments
+                        .iter()
+                        .skip(1)
+                        .map(|segment| segment.ident.to_string())
+                        .collect::<Vec<_>>()
+                        .join("::");
+                    s = if suffix.is_empty() {
+                        "std::thread".to_string()
+                    } else {
+                        format!("std::thread::{suffix}")
+                    };
+                }
+            }
             if let Some(hit) = blocked_match(&s) {
                 *self.blocked = Some(hit);
                 return;
@@ -145,6 +252,20 @@ fn check_blocked_apis(code: &str) -> Result<(), GameError> {
                 }
             }
             syn::visit::visit_item_use(self, node);
+        }
+        fn visit_item_macro(&mut self, node: &'ast syn::ItemMacro) {
+            if let Some(hit) = blocked_in_macro_tokens(&node.mac.tokens) {
+                *self.blocked = Some(hit);
+                return;
+            }
+            syn::visit::visit_item_macro(self, node);
+        }
+        fn visit_expr_macro(&mut self, node: &'ast syn::ExprMacro) {
+            if let Some(hit) = blocked_in_macro_tokens(&node.mac.tokens) {
+                *self.blocked = Some(hit);
+                return;
+            }
+            syn::visit::visit_expr_macro(self, node);
         }
         // 内存不安全（v3 §9.2）。范围决策：unsafe 块 + unsafe fn（含 impl/trait
         // 内的关联 unsafe fn）——unsafe fn 函数体可直接书写未检查操作，是完整的不安全面。
@@ -180,6 +301,7 @@ fn check_blocked_apis(code: &str) -> Result<(), GameError> {
 
     let mut scan = Scan {
         blocked: &mut blocked,
+        thread_aliases: &thread_aliases,
     };
     syn::visit::Visit::visit_file(&mut scan, &ast);
 
@@ -217,6 +339,40 @@ fn wait_with_timeout_opt(
         }
         std::thread::sleep(Duration::from_millis(50));
     }
+}
+
+/// Bwrap 运行在独立的主机进程组中。超时时必须杀掉整组：仅杀外层
+/// bwrap 进程时，PID 命名空间中的 init 及其已派生子进程仍可能继续运行。
+#[cfg(unix)]
+fn wait_with_timeout_opt_process_tree(
+    child: &mut std::process::Child,
+    secs: u64,
+) -> Result<Option<std::process::ExitStatus>, GameError> {
+    let deadline = Instant::now() + Duration::from_secs(secs);
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(Some(status));
+        }
+        if Instant::now() >= deadline {
+            // spawn_sandbox 用 process_group(0) 令 PGID 等于 bwrap PID；负 PID
+            // 是 POSIX kill 对整个进程组的寻址。忽略错误以保持原有 timeout 语义。
+            let group = format!("-{}", child.id());
+            let _ = Command::new("/bin/kill")
+                .args(["-KILL", "--", &group])
+                .status();
+            let _ = child.wait();
+            return Ok(None);
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[cfg(not(unix))]
+fn wait_with_timeout_opt_process_tree(
+    child: &mut std::process::Child,
+    secs: u64,
+) -> Result<Option<std::process::ExitStatus>, GameError> {
+    wait_with_timeout_opt(child, secs)
 }
 
 fn read_piped(child: &mut std::process::Child) -> (String, String) {
@@ -411,6 +567,9 @@ impl BwrapSandbox {
     ) -> Result<std::process::Child, std::io::Error> {
         let mut args: Vec<String> = vec![
             "--unshare-all".into(), // 用户/pid/uts/ipc/cgroup/网络命名空间全新
+            // 超时会终止外层 bwrap 进程；让 PID 命名空间内的 init 收到父进程
+            // 死亡通知，避免其已经派生的子进程逃逸并继续占用主机资源。
+            "--die-with-parent".into(),
             "--ro-bind".into(),
             "/".into(),
             "/".into(), // 整棵根 fs 只读
@@ -448,6 +607,13 @@ impl BwrapSandbox {
 
         let mut c = Command::new(&self.bwrap);
         c.args(&args).stdout(Stdio::piped()).stderr(Stdio::piped());
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            // 为超时清理创建独立的主机进程组；见
+            // wait_with_timeout_opt_process_tree。
+            c.process_group(0);
+        }
         c.spawn()
     }
 }
@@ -486,12 +652,16 @@ impl Sandbox for BwrapSandbox {
                 dir.path(),
                 true, // 编译期工作区可写（rustc 写产物）
                 self.compile_mem_limit_kb,
-                "cd \"$1\" && exec rustc --edition 2021 main.rs -o main",
+                // lld 默认按宿主 CPU 数创建工作线程。在受限 PID 命名空间中这会
+                // 触发 EAGAIN，最终被 rustc 笼统报告为 `linking with cc failed`。
+                // 单线程链接足以满足小型练习程序，同时保留 bwrap 的资源隔离。
+                "cd \"$1\" && exec rustc --edition 2021 main.rs -C link-arg=-Wl,--threads=1 -o main",
                 dir.path().to_str().expect("工作区路径非 UTF-8"),
             )
             .map_err(sandbox_init_error)?;
 
-        let status = wait_with_timeout(&mut child, self.compile_timeout_secs)?;
+        let status = wait_with_timeout_opt_process_tree(&mut child, self.compile_timeout_secs)?
+            .ok_or(GameError::CompileTimeout(self.compile_timeout_secs))?;
 
         if status.success() {
             Ok(CompileOutcome::Success { binary: out })
@@ -521,7 +691,7 @@ impl Sandbox for BwrapSandbox {
                 ))
             })?;
 
-        let status = match wait_with_timeout_opt(&mut child, self.run_timeout_secs)? {
+        let status = match wait_with_timeout_opt_process_tree(&mut child, self.run_timeout_secs)? {
             Some(st) => st,
             None => return Ok(RunOutcome::Timeout),
         };
@@ -619,6 +789,15 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn blocked_renamed_use_cannot_bypass_prefix_rule() {
+        let code = "use std::fs as harmless;\nfn main() { let _ = harmless::read_to_string(\"/etc/passwd\"); }";
+        assert!(matches!(
+            sandbox().compile(code),
+            Err(GameError::SandboxBlocked(_))
+        ));
+    }
+
     // ============ P4-23：syn 拦截清单 7 类补全（v3 §9.2） ============
 
     #[test]
@@ -653,6 +832,15 @@ mod tests {
     fn blocked_use_thread_spawn_rejected() {
         // `use std::thread::spawn;` 导入本身即触发精确拦截
         let code = "use std::thread::spawn;\nfn main() { spawn(|| {}); }";
+        assert!(matches!(
+            sandbox().compile(code),
+            Err(GameError::SandboxBlocked(_))
+        ));
+    }
+
+    #[test]
+    fn blocked_thread_spawn_via_module_alias() {
+        let code = "use std::thread as th;\nfn main() { th::spawn(|| {}); }";
         assert!(matches!(
             sandbox().compile(code),
             Err(GameError::SandboxBlocked(_))
@@ -707,6 +895,21 @@ mod tests {
     fn comment_mention_of_fs_not_blocked() {
         // AST 扫描回归：注释里的 std::fs 不误报
         let code = "// 提示：std::fs::read_to_string 会触发拦截\nfn main() { println!(\"ok\"); }";
+        check_blocked_apis(code).unwrap();
+    }
+
+    #[test]
+    fn blocked_api_hidden_in_macro_definition_rejected() {
+        let code = "macro_rules! read_secret { () => { std::fs::read_to_string(\"/etc/passwd\") }; }\nfn main() { let _ = read_secret!(); }";
+        assert!(matches!(
+            sandbox().compile(code),
+            Err(GameError::SandboxBlocked(_))
+        ));
+    }
+
+    #[test]
+    fn string_in_macro_arguments_is_not_blocked() {
+        let code = "fn main() { println!(\"std::fs is documentation only\"); }";
         check_blocked_apis(code).unwrap();
     }
 

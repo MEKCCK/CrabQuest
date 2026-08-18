@@ -11,6 +11,8 @@ pub enum Input {
     Enter,
     Esc,
     Submit,
+    /// 选择题作答（0-based 选项下标）。
+    SelectQuizAnswer(u32),
     Hint,
     Reset,
     /// P2-08：复习关卡说明回血（engine.review_lore）
@@ -61,6 +63,8 @@ pub struct LevelData {
     pub feedback: Option<FeedbackData>,
     /// P2-11：参考答案（最后一条 hint = 解法级修复代码）是否已二次确认展示
     pub reference_revealed: bool,
+    /// 选择题当前选择；代码关恒为 None。
+    pub quiz_answer: Option<u32>,
 }
 
 impl LevelData {
@@ -196,7 +200,7 @@ impl GameApp {
         })
     }
 
-    /// P3-18：统计页访问门槛（R9 生命周期贤者 = 内置 13 关通关；R8 12 关不可进）。
+    /// 统计页访问门槛：R9 生命周期贤者（当前 55 关主线中为内置 43 关通关）。
     pub fn stats_accessible(&self) -> bool {
         crate::rank::rank_for(self.engine.builtin_completed_count()).level >= 9
     }
@@ -270,6 +274,7 @@ impl GameApp {
             level,
             feedback: None,
             reference_revealed: false,
+            quiz_answer: None,
         };
         self.last_level = Some(d.clone());
         // P3-19：新进入关卡清除上次跳转目标（不同关的行号无意义）
@@ -413,7 +418,11 @@ impl GameApp {
                 // P3-18：提交前快照（末关庆典一次性判定 + 通关回血量）
                 let hearts_before = self.engine.save.hearts;
                 let was_victory_celebrated = self.engine.save.victory_celebrated;
-                let result = self.engine.submit(&d.code)?;
+                let result = if d.level.kind == "quiz" {
+                    self.engine.submit_quiz(d.quiz_answer)?
+                } else {
+                    self.engine.submit(&d.code)?
+                };
                 match result {
                     Validation::Pass { xp_gained } => {
                         // P4-26：下一关标题只在同章节内取（内置末尾/自定义末尾 → None）
@@ -530,7 +539,16 @@ impl GameApp {
             Input::Reset => {
                 if let Screen::Level(cur) = &mut self.screen {
                     cur.code = cur.level.starter_code.clone();
+                    cur.quiz_answer = None;
                     self.last_level = Some(cur.clone());
+                }
+            }
+            Input::SelectQuizAnswer(answer) => {
+                if let Screen::Level(cur) = &mut self.screen {
+                    if cur.level.kind == "quiz" && (answer as usize) < cur.level.options.len() {
+                        cur.quiz_answer = Some(answer);
+                        self.last_level = Some(cur.clone());
+                    }
                 }
             }
             Input::Esc => self.screen = Self::build_map(&self.engine, 0),
@@ -1312,5 +1330,35 @@ source = "community"
             Box::new(DevSandbox::new()),
         ));
         assert!(plain.custom_load_errors.is_empty());
+    }
+
+    #[test]
+    fn quiz_answer_selection_submits_without_using_code_editor() {
+        let quiz = r#"
+[[level]]
+id = "q1"
+title = "quiz"
+tier = "l0"
+description = "d"
+kind = "quiz"
+options = ["a", "b"]
+answer_index = 1
+source = "test"
+"#;
+        let engine = Engine::new(
+            LevelSet { levels: parse_levels(quiz).unwrap() },
+            Default::default(),
+            ErrorMapper::default_fallback(),
+            Box::new(DevSandbox::new()),
+        );
+        let mut a = GameApp::new(engine);
+        a.handle(Input::Enter).unwrap();
+        a.handle(Input::SelectQuizAnswer(1)).unwrap();
+        match a.screen() {
+            Screen::Level(d) => assert_eq!(d.quiz_answer, Some(1)),
+            other => panic!("expected quiz level, got {other:?}"),
+        }
+        a.handle(Input::Submit).unwrap();
+        assert!(matches!(a.screen(), Screen::Feedback(FeedbackData { passed: true, .. })));
     }
 }
