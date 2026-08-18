@@ -8,3 +8,5 @@ game-core = { path = "../game-core" }
 game-data = { path = "../game-data" }
 macroquad = "0.4"
 egui-macroquad = "0.17"
+# 仅用于解码内嵌的本地图标 PNG；不包含网络加载功能。
+image = { version = "0.24", default-features = false, features = ["png"] }

@@ -1,0 +1,32 @@
+[[level]]
+id = "l1-move2"
+title = "所有权：移动后不能再用"
+tier = "l1"
+description = "fill_vec(vec0) 移走了 vec0 的所有权，main 随后再读 vec0 报错。目标输出两行长度与内容。涉及概念：所有权移动（move）。"
+hint = "传入函数的变量不再可用，需要复制一份再传。"
+hints = [
+  "所有权被移入函数后，原变量不能再使用。",
+  "E0382：vec0 被移动进 fill_vec 后不能再读。见 book-cn ch04-01「所有权」：https://rustwiki.org/zh-CN/book/ch04-01-what-is-ownership.html",
+  "let vec1 = fill_vec(vec0.clone());\n调用处给参数复制一份，保留 vec0。",
+]
+starter_code = '''
+fn fill_vec(vec: Vec<i32>) -> Vec<i32> {
+    let mut vec = vec;
+
+    vec.push(88);
+
+    vec
+}
+
+fn main() {
+    let vec0 = vec![22, 44, 66];
+    let vec1 = fill_vec(vec0);
+    println!("vec0 has length {} content {:?}", vec0.len(), vec0);
+    println!("vec1 has length {} content {:?}", vec1.len(), vec1);
+}
+'''
+expect_output = '''
+vec0 has length 3 content [22, 44, 66]
+vec1 has length 4 content [22, 44, 66, 88]
+'''
+source = "rustlings (exercises/06_move_semantics/move_semantics2.rs, v6.5.0, MIT，测试体搬 main：assert 改 println)"

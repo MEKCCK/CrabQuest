@@ -1,0 +1,35 @@
+[[level]]
+id = "l2-match"
+title = "match：穷尽枚举"
+tier = "l2"
+description = "describe 的 match 少写了一个枚举分支，编译器要求穷尽所有变体。目标输出 西。涉及概念：match 与枚举。"
+hint = "match 要覆盖枚举的全部变体，漏一个都无法编译。"
+hints = [
+  "match 必须穷尽枚举的所有变体，漏掉任何一个都无法编译。",
+  "E0004：模式未穷尽，缺少 West 分支。见 book-cn ch06-02「match 控制流运算符」：https://rustwiki.org/zh-CN/book/ch06-02-match.html",
+  "Direction::West => \"西\",\n补上 West 分支返回「西」：分支齐全后 match 穷尽即可编译。",
+]
+starter_code = '''
+#[allow(dead_code)]
+enum Direction {
+    North,
+    South,
+    East,
+    West,
+}
+
+fn describe(d: Direction) -> &'static str {
+    match d {
+        Direction::North => "北",
+        Direction::South => "南",
+        Direction::East => "东",
+    }
+}
+
+fn main() {
+    let d = Direction::West;
+    println!("{}", describe(d));
+}
+'''
+expect_output = "西"
+source = "自编 (match 穷尽练习：少写一个枚举分支，无原题)"

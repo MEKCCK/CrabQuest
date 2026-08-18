@@ -1,0 +1,33 @@
+[[level]]
+id = "l2-errors2"
+title = "错误处理：? 传播解析错误"
+tier = "l2"
+description = "total_cost 里 qty 是解析结果 Result，直接与整数相乘无法编译。目标输出 171。涉及概念：? 运算符与 Result 传播。"
+hint = "把解析结果先用 ? 解包，出错时直接返回错误。"
+hints = [
+  "解析可能失败，Result 需要先解包才能参与运算。",
+  "E0369：qty 是 Result，不能与整数相乘。见 book-cn ch09-02「可恢复的错误与 Result」：https://rustwiki.org/zh-CN/book/ch09-02-recoverable-errors-with-result.html",
+  "let qty = item_quantity.parse::<i32>()?;\n解析行末尾加 ?，失败时立即把错误返回给调用者。",
+]
+starter_code = '''
+use std::num::ParseIntError;
+
+fn total_cost(item_quantity: &str) -> Result<i32, ParseIntError> {
+    let processing_fee = 1;
+    let cost_per_item = 5;
+
+    // TODO: 先处理解析失败的情况：让 ? 在出错时直接返回错误。
+    let qty = item_quantity.parse::<i32>();
+
+    Ok(qty * cost_per_item + processing_fee)
+}
+
+fn main() {
+    match total_cost("34") {
+        Ok(cost) => println!("{}", cost),
+        Err(_) => println!("解析失败"),
+    }
+}
+'''
+expect_output = "171"
+source = "rustlings (exercises/13_error_handling/errors2.rs, v6.5.0, MIT，测试体搬 main：match 改 println)"

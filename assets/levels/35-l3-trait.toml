@@ -1,0 +1,28 @@
+[[level]]
+id = "l3-trait"
+title = "实现 Trait"
+tier = "l3"
+description = "r.area() 调用失败：Area trait 尚未为 Rectangle 实现。目标输出「area: 20」。涉及概念：trait 实现。"
+hint = "类型要使用 trait 的方法，需要先实现该 trait。"
+hints = [
+  "trait 定义方法，类型实现后才能调用。",
+  "错误 E0599：area 方法未实现。见 book-cn ch10-02「trait：定义共享的行为」：https://rustwiki.org/zh-CN/book/ch10-02-traits.html",
+  "impl Area for Rectangle {\n    fn area(&self) -> u32 { self.width * self.height }\n}\n实现 Area，面积 = 宽 × 高。",
+]
+starter_code = '''
+struct Rectangle {
+    width: u32,
+    height: u32,
+}
+
+trait Area {
+    fn area(&self) -> u32;
+}
+
+fn main() {
+    let r = Rectangle { width: 4, height: 5 };
+    println!("area: {}", r.area());
+}
+'''
+expect_output = "area: 20"
+source = "自编 (trait 实现练习，无原题)"

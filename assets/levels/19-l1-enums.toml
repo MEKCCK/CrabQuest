@@ -1,0 +1,31 @@
+[[level]]
+id = "l1-enums"
+title = "枚举：先定义变体"
+tier = "l1"
+description = "Message 枚举没有定义任何变体，main 里引用的 Resize 等名字找不到，无法编译。目标输出五行动作名。涉及概念：枚举变体。"
+hint = "枚举的变体必须先定义才能使用，未定义的变体名编译期报错。"
+hints = [
+  "枚举的变体必须先定义才能使用，未定义的变体名编译期报错。",
+  "E0599 找不到变体：Message 缺少 main 用到的变体。见 book-cn ch06-01「枚举」：https://rustwiki.org/zh-CN/book/ch06-01-defining-an-enum.html",
+  "enum Message { Resize, Move, Echo, ChangeColor, Quit }\n补上 main 中使用的五个变体即可。",
+]
+starter_code = '''
+#[derive(Debug)]
+enum Message {
+    // TODO: 定义 main 中会用到的消息变体。
+}
+
+fn main() {
+    println!("{:?}", Message::Resize);
+    println!("{:?}", Message::Move);
+    println!("{:?}", Message::Echo);
+    println!("{:?}", Message::ChangeColor);
+    println!("{:?}", Message::Quit);
+}
+'''
+expect_output = '''Resize
+Move
+Echo
+ChangeColor
+Quit'''
+source = "rustlings (exercises/08_enums/enums1.rs, v6.5.0, MIT，注释中文化)"

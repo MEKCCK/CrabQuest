@@ -1,0 +1,26 @@
+[[level]]
+id = "l4-fnptr"
+title = "挑战：制造编译错误 E0794"
+tier = "l4"
+description = "函数指针比较的地址并不唯一，但当前代码能编译并输出 0。请修改代码，让它产生编译错误 E0794（晚绑定生命周期实参不能显式指定）。涉及概念：生命周期绑定时机。"
+hint = "生命周期参数分早绑定与晚绑定：晚绑定参数在调用时才确定，不能提前显式给出实参。"
+hints = [
+  "生命周期参数分早绑定与晚绑定：晚绑定参数在调用时才确定，不能提前显式给出实参。",
+  "E0794：晚绑定生命周期参数不能显式指定实参；f 晚绑定、g 早绑定。见 book-cn ch10-03：https://rustwiki.org/zh-CN/book/ch10-03-lifetime-syntax.html",
+  "let pf = f::<'static> as fn();\n在 f（或 g）的调用处显式写出 'static 实参，即可触发 E0794。",
+]
+starter_code = '''
+fn f<'a>() {}
+fn g<'a: 'a>() {}
+
+fn main() {
+    let pf = f as fn();
+    let pg = g as fn();
+    println!("{}", (pf == pg) as u8);
+}
+'''
+expect_output = "0"
+allow_compile_fail = true
+expect_error_code = "E0794"
+source = "rust-quiz (questions/011-function-pointer-comparison.rs, CC BY-SA 4.0，解释自写)"
+link = "https://dtolnay.github.io/rust-quiz/011"

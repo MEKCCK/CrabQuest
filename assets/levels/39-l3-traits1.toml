@@ -1,0 +1,30 @@
+[[level]]
+id = "l3-traits1"
+title = "trait：实现方法"
+tier = "l3"
+description = "AppendBar trait 已定义，但 String 的 impl 缺少方法体，编译失败。目标输出两行 s: FooBar 与 s: BarBar。涉及概念：trait 实现。"
+hint = "实现了 trait 就要实现它的方法。"
+hints = [
+  "实现了 trait，就须实现它声明的全部方法。",
+  "错误 E0046：impl 缺少 trait 声明的方法。见 book-cn ch10-02「trait：定义共享的行为」：https://rustwiki.org/zh-CN/book/ch10-02-traits.html",
+  "impl AppendBar for String {\n    fn append_bar(self) -> String { format!(\"{}Bar\", self) }\n}\n实现方法：在 self 末尾拼接 \"Bar\" 并返回。",
+]
+starter_code = '''
+// trait AppendBar 声明一个方法：把 "Bar" 追加到实现者末尾。
+trait AppendBar {
+    fn append_bar(self) -> Self;
+}
+
+impl AppendBar for String {
+    // TODO: 为 String 实现 append_bar 方法。
+}
+
+fn main() {
+    let s = String::from("Foo").append_bar();
+    println!("s: {}", s);
+    let s = String::from("").append_bar().append_bar();
+    println!("s: {}", s);
+}
+'''
+expect_output = "s: FooBar\ns: BarBar"
+source = "rustlings (exercises/15_traits/traits1.rs, v6.5.0, MIT，R1 改写：测试体搬 main 打印)"

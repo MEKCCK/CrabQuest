@@ -4,6 +4,8 @@ use thiserror::Error;
 pub enum GameError {
     #[error("TOML 解析失败 {0}: {1}")]
     TomlParse(String, String),
+    #[error("关卡数据校验失败 {0}: {1}")]
+    LevelDataInvalid(String, String),
     #[error("关卡目录不存在或为空: {0}")]
     LevelDirNotFound(String),
     #[error("关卡 ID 重复: {0}")]
@@ -12,6 +14,10 @@ pub enum GameError {
     LevelNotFound(String),
     #[error("关卡未解锁: {0}")]
     LevelLocked(String),
+    #[error("关卡类型不匹配: {0}")]
+    LevelKindMismatch(String),
+    #[error("选择题选项越界: 提交 {index}（0-based），选项共 {len} 项")]
+    QuizAnswerOutOfRange { index: u32, len: usize },
     #[error("编译超时（超过 {0} 秒）")]
     CompileTimeout(u64),
     #[error("运行超时（超过 {0} 秒）")]
@@ -24,6 +30,9 @@ pub enum GameError {
     CorruptSave(String),
     #[error("沙盒拦截: {0}")]
     SandboxBlocked(String),
+    /// P2-08：0 心禁提交（UI 应已禁用按钮并提示复习回血；引擎层兜底拦截）
+    #[error("❤️ 已空：复习关卡说明可回 1 心")]
+    NoHearts,
     #[error("IO 错误: {0}")]
     Io(#[from] std::io::Error),
 }
