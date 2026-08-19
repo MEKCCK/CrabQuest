@@ -1,6 +1,6 @@
 # 错误码 fixture 矩阵（Tier 2 / Tier 3）
 
-本目录是 `crates/game-core/tests/fixtures_compile.rs`（Tier 2）与
+本目录是 `crates/crab-quest-core/tests/fixtures_compile.rs`（Tier 2）与
 `tests/levels_regression.rs`（Tier 3）的素材。需求：docs/tasks/gameplay/P2-16-测试矩阵与clippy决策.md；
 实测基准：docs-review/L3-B2-parser.md（15 fixture，rustc 1.97 实测）。
 

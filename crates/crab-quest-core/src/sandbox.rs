@@ -50,6 +50,29 @@ impl Default for DevSandbox {
 /// 整段拦截的 std 前缀：路径以这些字符串开头即拦截（`std::fs` 全部等）。
 const BLOCKED_PREFIXES: [&str; 4] = ["std::fs", "std::process", "std::env", "std::net"];
 
+/// 清理旧的 rlg-* 临时目录（>1 小时未修改）：泄漏的 TempDir 会在长期会话/测试
+/// 中累积占满 /tmp（tmpfs），编译前顺带清理，防止磁盘耗尽。
+fn gc_stale_temp_dirs() {
+    let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let p = e.path();
+        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if !name.starts_with("rlg-") || !p.is_dir() {
+            continue;
+        }
+        let stale = p
+            .metadata()
+            .and_then(|m| m.modified())
+            .map(|t| t.elapsed().map(|d| d.as_secs() > 3600).unwrap_or(false))
+            .unwrap_or(false);
+        if stale {
+            let _ = std::fs::remove_dir_all(&p);
+        }
+    }
+}
+
 /// 精确拦截：仅 `std::thread::spawn` 本身（v3 §9.2「并发」精确匹配）。
 /// `std::thread::sleep` / `std::thread::yield_now` / `std::thread::park` 等
 /// 无害调用必须放行；`use std::thread;` 导入模块本身也不拦截。
@@ -390,6 +413,7 @@ fn read_piped(child: &mut std::process::Child) -> (String, String) {
 
 impl Sandbox for DevSandbox {
     fn compile(&self, code: &str) -> Result<CompileOutcome, GameError> {
+        gc_stale_temp_dirs();
         check_blocked_apis(code)?;
 
         let dir = tempfile::Builder::new()
@@ -397,7 +421,7 @@ impl Sandbox for DevSandbox {
             .tempdir()
             .map_err(|e| GameError::CompileEnv(e.to_string()))?;
         // 编译产物必须活到 run() 之后：泄漏 TempDir 避免目录被自动删除。
-        // 开发期沙盒可接受 /tmp 累积；计划②真隔离（bwrap）时整体替换。
+        // 泄漏目录由 gc_stale_temp_dirs() 定期清理（>1 小时未修改），防止 /tmp 被测试/运行累积占满。
         let dir = Box::leak(Box::new(dir));
         let src = dir.path().join("main.rs");
         let out = dir.path().join("main");
@@ -635,6 +659,7 @@ fn sandbox_init_error(e: std::io::Error) -> GameError {
 impl Sandbox for BwrapSandbox {
     fn compile(&self, code: &str) -> Result<CompileOutcome, GameError> {
         // 纵深防御：syn 静态拦截保留（bwrap 是进程级兜底）
+        gc_stale_temp_dirs();
         check_blocked_apis(code)?;
 
         let dir = tempfile::Builder::new()

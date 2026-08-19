@@ -14,11 +14,11 @@ pub fn errors_path() -> PathBuf {
 }
 
 /// P4-26：用户自定义关卡目录（默认位置）：
-/// `~/.local/share/rust-learning-game/levels/`。该目录不存在时游戏行为与现状一致
+/// `~/.local/share/crab-quest/levels/`。该目录不存在时游戏行为与现状一致
 /// （无自定义章节、不报错）。
 pub fn user_levels_dir() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    PathBuf::from(home).join(".local/share/rust-learning-game/levels")
+    PathBuf::from(home).join(".local/share/crab-quest/levels")
 }
 
 /// P4-26：从命令行参数解析自定义关卡目录：`--levels <dir>` 优先，未提供回退默认用户目录。
@@ -51,9 +51,9 @@ mod tests {
 
     #[test]
     fn custom_levels_dir_defaults_to_user_dir() {
-        // 无 --levels → 回退 ~/.local/share/rust-learning-game/levels
+        // 无 --levels → 回退 ~/.local/share/crab-quest/levels
         let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-        let expect = PathBuf::from(home).join(".local/share/rust-learning-game/levels");
+        let expect = PathBuf::from(home).join(".local/share/crab-quest/levels");
         assert_eq!(custom_levels_dir_from_args(Vec::<String>::new().into_iter()), expect);
         // --levels 缺值 → 同样回退默认
         let args = ["--levels".to_string()];
