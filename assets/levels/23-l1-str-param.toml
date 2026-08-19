@@ -1,0 +1,25 @@
+[[level]]
+id = "l1-str-param"
+title = "&String 与 &str 参数"
+tier = "l1"
+description = "count 只读取字符串长度，参数应写成 &str：它能同时接受 &String（自动 deref 转换）与 as_str() 得到的 &str。当前 count 用 &String，第二处调用类型不匹配。目标输出两行 5。涉及概念：字符串切片、deref 强制转换。"
+hint = "只读字符串内容时用 &str 而不是 &String，调用方传 &s 会自动转成 &str。"
+hints = [
+  "&str 是字符串切片，能同时接受 &String 和 &str；只读场景比 &String 更通用。",
+  "见 book-cn ch04-03「切片」：https://rustwiki.org/zh-CN/book/ch04-03-slices.html",
+  "fn count(s: &str) -> usize {\n    s.len()\n}",
+]
+starter_code = '''
+fn main() {
+    let s = String::from("hello");
+    println!("{}", count(&s));
+    let s2 = String::from("world");
+    println!("{}", count(s2.as_str()));
+}
+
+fn count(s: &String) -> usize {
+    s.len()
+}
+'''
+expect_output = "5\n5"
+source = "rustlings (09_strings/strings2.rs 主题，改编)"

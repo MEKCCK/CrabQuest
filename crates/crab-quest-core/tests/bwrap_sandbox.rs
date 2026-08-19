@@ -272,8 +272,8 @@ fn bwrap_all_levels_starter_regression() {
     let set = LevelSet::load(&assets_levels_dir()).expect("加载 assets/levels 失败");
     assert_eq!(
         set.len(),
-        56,
-        "当前关卡集应为 56 关"
+        62,
+        "当前关卡集应为 62 关"
     );
     let mut failures: Vec<String> = Vec::new();
     for lv in &set.levels {

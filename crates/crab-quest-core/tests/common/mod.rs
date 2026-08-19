@@ -175,6 +175,12 @@ pub fn starter_expect(id: &str) -> StarterExpect {
         "l4-fnmut-copy" => StarterExpect::CompileFail { code: "E0382" },
         "l4-boss" => StarterExpect::CompileFail { code: "E0596" },
         "l2-panics" => StarterExpect::Compiles,
+        "l1-tuple-partial-move" => StarterExpect::CompileFail { code: "E0382" },
+        "l1-str-param" => StarterExpect::CompileFail { code: "E0308" },
+        "l2-closure-count" => StarterExpect::CompileFail { code: "E0596" },
+        "l3-generic-largest" => StarterExpect::CompileFail { code: "E0369" },
+        "l3-trait-object" => StarterExpect::CompileFail { code: "E0782" },
+        "l4-closure-move" => StarterExpect::CompileFail { code: "E0382" },
         other => panic!("期望表未覆盖关卡 {other}：新增关卡必须补充期望画像"),
     }
 }

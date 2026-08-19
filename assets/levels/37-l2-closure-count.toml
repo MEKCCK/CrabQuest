@@ -1,0 +1,22 @@
+[[level]]
+id = "l2-closure-count"
+title = "闭包的可变捕获"
+tier = "l2"
+description = "闭包修改捕获的 count 属于 FnMut 闭包，调用它会改动闭包自身的捕获状态，所以闭包绑定需要声明为 mut。当前 let add 导致无法以可变方式借用。目标输出 2。涉及概念：FnMut 闭包、可变绑定。"
+hint = "调用 FnMut 闭包要 &mut 它自身，因此闭包绑定要写成 let mut add。"
+hints = [
+  "修改捕获变量的闭包是 FnMut；每次调用 add() 都要以 &mut 借用该闭包本身。",
+  "见 book-cn ch13-01「闭包」：https://rustwiki.org/zh-CN/book/ch13-01-closures.html",
+  "let mut add = || { count += 1; };",
+]
+starter_code = '''
+fn main() {
+    let mut count = 0;
+    let add = || { count += 1; };
+    add();
+    add();
+    println!("{}", count);
+}
+'''
+expect_output = "2"
+source = "自编 (闭包捕获练习，无原题)"

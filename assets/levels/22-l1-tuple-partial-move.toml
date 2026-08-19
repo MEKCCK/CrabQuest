@@ -1,0 +1,21 @@
+[[level]]
+id = "l1-tuple-partial-move"
+title = "元组的部分移动"
+tier = "l1"
+description = "元组里若移走一个 String 字段，其余字段不能再按值访问。当前代码对 pair.0 移动后又按值打印，无法编译。目标输出「a」与「a b」两行。涉及概念：部分移动。"
+hint = "访问元组的 String 字段会移动它；想保留原元组就用 clone 或引用。"
+hints = [
+  "move 是对单个值的所有权转移：从元组里把 pair.0 绑定到 x 时，pair.0 被移走。一个值只能移一次。",
+  "见 book-cn ch04-01「所有权」：https://rustwiki.org/zh-CN/book/ch04-01-what-is-ownership.html",
+  "let x = pair.0.clone();\n把第一行改为 clone 副本，pair 的两个字段仍可用。",
+]
+starter_code = '''
+fn main() {
+    let pair = (String::from("a"), String::from("b"));
+    let x = pair.0;
+    println!("{}", x);
+    println!("{} {}", pair.0, pair.1);
+}
+'''
+expect_output = "a\na b"
+source = "自编 (元组部分移动练习，无原题)"

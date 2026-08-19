@@ -1,7 +1,7 @@
 #[test]
 fn all_levels_parse_and_consistent() {
     let set = crab_quest_core::LevelSet::load(&crab_quest_data::levels_dir()).expect("关卡目录加载失败");
-    assert_eq!(set.len(), 56, "当前内置关卡集应有 56 关");
+    assert_eq!(set.len(), 62, "当前内置关卡集应有 62 关");
     let mut tiers = std::collections::BTreeSet::new();
     for l in &set.levels {
         tiers.insert(l.tier.order());

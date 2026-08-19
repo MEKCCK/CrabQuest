@@ -26,8 +26,8 @@ fn tier3_levels_starter_error_codes() {
     let set = LevelSet::load(&assets_levels_dir()).expect("加载 assets/levels 失败");
     assert_eq!(
         set.len(),
-        56,
-        "关卡数应为 56（新增关卡必须同步更新 starter_expect 期望表）"
+        62,
+        "关卡数应为 62（新增关卡必须同步更新 starter_expect 期望表）"
     );
     let sb = DevSandbox::new();
     let mut failures: Vec<String> = Vec::new();

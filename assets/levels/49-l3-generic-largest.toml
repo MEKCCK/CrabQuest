@@ -1,0 +1,28 @@
+[[level]]
+id = "l3-generic-largest"
+title = "泛型与比较约束"
+tier = "l3"
+description = "largest 用 < 比较泛型 T，但 T 没声明支持比较。给泛型加上 PartialOrd（可比较）与 Copy（返回拷贝而非移动）约束。目标输出 9。涉及概念：泛型约束、trait bound。"
+hint = "用 < 比较泛型需要 PartialOrd；返回内部值需要 Copy。"
+hints = [
+  "泛型函数要比较或复制 T，必须声明对应的 trait bound：<T: PartialOrd + Copy>。",
+  "见 book-cn ch10「泛型与 trait」：https://rustwiki.org/zh-CN/book/ch10-02-traits.html",
+  "fn largest<T: PartialOrd + Copy>(list: &[T]) -> T {",
+]
+starter_code = '''
+fn largest<T>(list: &[T]) -> T {
+    let mut max = &list[0];
+    for item in list {
+        if item > max {
+            max = item;
+        }
+    }
+    *max
+}
+
+fn main() {
+    println!("{}", largest(&[3, 7, 2, 9]));
+}
+'''
+expect_output = "9"
+source = "rustlings (14_generics 主题，改编)"

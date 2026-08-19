@@ -1,0 +1,30 @@
+[[level]]
+id = "l3-trait-object"
+title = "trait 对象 Box<dyn>"
+tier = "l3"
+description = "想把不同类型装进同一个容器时用 trait 对象 Box<dyn Trait>。裸的 Box<Animal> 在 edition 2021 是错误（必须显式写 dyn）。目标输出 woof。涉及概念：trait 对象、dyn 关键字。"
+hint = "trait 对象必须显式写 dyn 关键字：Box<dyn Animal>。"
+hints = [
+  "动态派发的 trait 对象在类型里必须带 dyn 前缀；不带 dyn 直接写 Box<Animal> 会报 E0782。",
+  "见 book-cn ch17「trait 对象」：https://rustwiki.org/zh-CN/book/ch17-02-trait-objects.html",
+  "let animal: Box<dyn Animal> = Box::new(Dog);",
+]
+starter_code = '''
+trait Animal {
+    fn speak(&self) -> String;
+}
+
+struct Dog;
+impl Animal for Dog {
+    fn speak(&self) -> String {
+        "woof".to_string()
+    }
+}
+
+fn main() {
+    let animal: Box<Animal> = Box::new(Dog);
+    println!("{}", animal.speak());
+}
+'''
+expect_output = "woof"
+source = "rustlings (15_traits 主题，改编)"

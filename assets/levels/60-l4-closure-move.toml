@@ -1,0 +1,23 @@
+[[level]]
+id = "l4-closure-move"
+title = "闭包的 move 捕获"
+tier = "l4"
+description = "闭包体里 `let _t = s` 会让闭包按值捕获 s（move）。调用闭包后 s 的所有权已进入闭包，main 再打印 s 会报错。用 clone 另存一份再 move，目标输出 hello。涉及概念：闭包按值/按引用捕获。"
+hint = "闭包体内把它移进局部变量会让闭包按值捕获；想保留原变量就先 clone。"
+hints = [
+  "闭包默认按最小需求捕获（借用优先）；一旦闭包内 move 了变量（如移进局部变量），就变成按值捕获。",
+  "见 book-cn ch13 闭包捕获：https://rustwiki.org/zh-CN/book/ch13-01-closures.html",
+  "let s2 = s.clone();\n再让闭包 move 掉 s，最后打印的是 s2。",
+]
+starter_code = '''
+fn main() {
+    let s = String::from("hello");
+    let consume = || {
+        let _t = s;
+    };
+    consume();
+    println!("{}", s);
+}
+'''
+expect_output = "hello"
+source = "自编 (闭包捕获权练习，无原题)"
