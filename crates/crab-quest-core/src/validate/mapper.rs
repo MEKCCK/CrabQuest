@@ -395,7 +395,7 @@ E0412 = "该错误码已不再由 rustc 发射（找不到类型现报 E0425）�
         assert!(m.fallback().is_some(), "default_fallback 也应内置 [fallback] 兜底段");
     }
 
-    /// 内容校验工具：新条目 zh ≤60 / fix ≤40 / example ≤8 行（真实 assets 由 game-data 集成测试断言）
+    /// 内容校验工具：新条目 zh ≤60 / fix ≤40 / example ≤8 行（真实 assets 由 crab-quest-data 集成测试断言）
     #[test]
     fn word_count_limits_hold_in_v2_fixture() {
         let m = load_str(V2_FORMAT);

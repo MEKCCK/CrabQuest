@@ -11,8 +11,8 @@
 mod common;
 use common::*;
 
-use game_core::level::LevelSet;
-use game_core::sandbox::{BwrapSandbox, CompileOutcome, RunOutcome, Sandbox};
+use crab_quest_core::level::LevelSet;
+use crab_quest_core::sandbox::{BwrapSandbox, CompileOutcome, RunOutcome, Sandbox};
 use std::path::PathBuf;
 use std::process::Command;
 

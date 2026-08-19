@@ -1,9 +1,9 @@
 [package]
-name = "game-data"
+name = "crab-quest-data"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
 
 [dev-dependencies]
-game-core = { path = "../game-core" }
+crab-quest-core = { path = "../crab-quest-core" }

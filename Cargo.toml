@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/game-core", "crates/game-ui", "crates/game-data"]
+members = ["crates/crab-quest-core", "crates/crab-quest-ui", "crates/crab-quest-data"]
 
 [workspace.package]
 version = "0.1.0"

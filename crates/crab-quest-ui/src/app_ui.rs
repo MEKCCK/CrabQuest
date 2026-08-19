@@ -1,15 +1,15 @@
 use egui_macroquad::egui;
-use game_core::app::{
+use crab_quest_core::app::{
     ChapterMapData, FeedbackData, GameApp, GameFlow, Input, LevelData, MenuData, Screen,
 };
-use game_core::editor::{tokenize, TokenKind};
-use game_core::engine::{
+use crab_quest_core::editor::{tokenize, TokenKind};
+use crab_quest_core::engine::{
     boss_hint_lock_remaining, boss_hint_locked, hint_unlock_state, HintUnlockState,
 };
-use game_core::error::GameError;
-use game_core::level::LevelTier;
-use game_core::ui::UiBackend;
-use game_core::validate::{ErrorCard, OutputDiff};
+use crab_quest_core::error::GameError;
+use crab_quest_core::level::LevelTier;
+use crab_quest_core::ui::UiBackend;
+use crab_quest_core::validate::{ErrorCard, OutputDiff};
 use macroquad::prelude::*;
 
 use crate::icons::{Icon, IconLibrary};
@@ -19,7 +19,7 @@ use crate::icons::{Icon, IconLibrary};
 const MAPLE_FONT: &[u8] = include_bytes!("../assets/JetBrainsMapleMono-Regular.ttf");
 
 /// Noto Sans SC（SIL OFL 1.1；Google Fonts 官方源下载后由 pyftsubset 子集化到游戏用字，
-/// 约 300KB。来源 URL、许可全文与复现命令见 crates/game-ui/scripts/font_subset.py 与
+/// 约 300KB。来源 URL、许可全文与复现命令见 crates/crab-quest-ui/scripts/font_subset.py 与
 /// assets/NotoSansSC-OFL.txt）——Proportional 家族主字体（标题/描述/正文无衬线中文）。
 const NOTO_SANS_SC: &[u8] = include_bytes!("../assets/NotoSansSC-Regular.ttf");
 
@@ -239,7 +239,7 @@ impl GameUi {
             Ok(GameFlow::Continue) => {
                 if submitted && matches!(app.screen(), Screen::Feedback(f) if f.passed) {
                     if let Some(path) = &self.save_path {
-                        if let Err(e) = game_core::save::save(app.save_ref(), path) {
+                        if let Err(e) = crab_quest_core::save::save(app.save_ref(), path) {
                             eprintln!("通关自动存档失败: {e}");
                         }
                     }
@@ -442,9 +442,9 @@ impl GameUi {
                 for (i, entry) in m.entries.iter().enumerate().take(m.custom_start) {
                     let text = Self::map_entry_text(entry, i + 1);
                     let fill = match entry.state {
-                        game_core::save::LevelState::Passed => egui::Color32::from_rgb(27, 73, 67),
-                        game_core::save::LevelState::Unlocked => egui::Color32::from_rgb(35, 66, 99),
-                        game_core::save::LevelState::Locked => egui::Color32::from_rgb(25, 33, 58),
+                        crab_quest_core::save::LevelState::Passed => egui::Color32::from_rgb(27, 73, 67),
+                        crab_quest_core::save::LevelState::Unlocked => egui::Color32::from_rgb(35, 66, 99),
+                        crab_quest_core::save::LevelState::Locked => egui::Color32::from_rgb(25, 33, 58),
                     };
                     let node = egui::Button::new(egui::RichText::new(text).size(15.0))
                         .fill(fill)
@@ -494,11 +494,11 @@ impl GameUi {
     }
 
     /// P4-26：地图条目文案（图标 + 章节内序号 + 标题 + 难度层 + 状态）
-    fn map_entry_text(entry: &game_core::app::MapEntry, number: usize) -> String {
+    fn map_entry_text(entry: &crab_quest_core::app::MapEntry, number: usize) -> String {
         let (icon, state_str) = match entry.state {
-            game_core::save::LevelState::Passed => ("[完成]", "已通关"),
-            game_core::save::LevelState::Unlocked => ("[可玩]", "可挑战"),
-            game_core::save::LevelState::Locked => ("[锁定]", "未解锁"),
+            crab_quest_core::save::LevelState::Passed => ("[完成]", "已通关"),
+            crab_quest_core::save::LevelState::Unlocked => ("[可玩]", "可挑战"),
+            crab_quest_core::save::LevelState::Locked => ("[锁定]", "未解锁"),
         };
         let tier = match entry.level.tier {
             LevelTier::L0 => "L0 入门",
@@ -518,7 +518,7 @@ impl GameUi {
         &mut self,
         ctx: &egui::Context,
         app: &mut GameApp,
-        s: &game_core::app::StatsData,
+        s: &crab_quest_core::app::StatsData,
     ) {
         if Self::key(ctx, egui::Key::Escape) || Self::key(ctx, egui::Key::Enter) {
             self.act(app, Input::Esc);
@@ -546,9 +546,9 @@ impl GameUi {
                     ui.label(egui::RichText::new("各关记录").strong().color(CYAN));
                     for (i, e) in s.entries.iter().enumerate() {
                         let (icon, state_str) = match e.progress.state {
-                            game_core::save::LevelState::Passed => ("[完成]", "已通关"),
-                            game_core::save::LevelState::Unlocked => ("[可玩]", "可挑战"),
-                            game_core::save::LevelState::Locked => ("[锁定]", "未解锁"),
+                            crab_quest_core::save::LevelState::Passed => ("[完成]", "已通关"),
+                            crab_quest_core::save::LevelState::Unlocked => ("[可玩]", "可挑战"),
+                            crab_quest_core::save::LevelState::Locked => ("[锁定]", "未解锁"),
                         };
                         let best = e
                             .progress
@@ -1602,12 +1602,12 @@ fn probe_online() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use game_core::app::{GameApp, Input, Screen};
-    use game_core::engine::Engine;
-    use game_core::level::{parse_levels, LevelSet};
-    use game_core::sandbox::DevSandbox;
-    use game_core::save::SaveData;
-    use game_core::validate::mapper::ErrorMapper;
+    use crab_quest_core::app::{GameApp, Input, Screen};
+    use crab_quest_core::engine::Engine;
+    use crab_quest_core::level::{parse_levels, LevelSet};
+    use crab_quest_core::sandbox::DevSandbox;
+    use crab_quest_core::save::SaveData;
+    use crab_quest_core::validate::mapper::ErrorMapper;
 
     fn test_app() -> GameApp {
         test_app_with_save(SaveData::default())
@@ -1772,7 +1772,7 @@ mod tests {
         let mut app = test_app();
         let mut ui = GameUi::new();
         let path = std::env::temp_dir().join(format!(
-            "rust-learning-game-ui-save-{}-{}.toml",
+            "rust-learning-crab-quest-ui-save-{}-{}.toml",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -2089,12 +2089,12 @@ mod tests {
 
     fn draw_panel(
         ctx: &egui::Context,
-        game_ui: &mut GameUi,
+        crab_quest_ui: &mut GameUi,
         fb: &FeedbackData,
     ) -> egui::FullOutput {
         ctx.run(egui::RawInput::default(), |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
-                game_ui.draw_feedback_panel(ui, &mut test_app(), fb, true);
+                crab_quest_ui.draw_feedback_panel(ui, &mut test_app(), fb, true);
             });
         })
     }
@@ -2119,8 +2119,8 @@ mod tests {
                 None,
             ),
         ]);
-        let mut game_ui = GameUi::new();
-        let out = draw_panel(&ctx, &mut game_ui, &fb);
+        let mut crab_quest_ui = GameUi::new();
+        let out = draw_panel(&ctx, &mut crab_quest_ui, &fb);
         assert!(
             shapes_contain_text(&out.shapes, "🔧 还差一点"),
             "失败语气应为「还差一点」"
@@ -2163,8 +2163,8 @@ mod tests {
             "❗ 程序运行崩溃（索引越界）\nmain.rs:3:21: index out of bounds: the len is 3 but the index is 3"
                 .into(),
         );
-        let mut game_ui = GameUi::new();
-        let out = draw_panel(&ctx, &mut game_ui, &fb);
+        let mut crab_quest_ui = GameUi::new();
+        let out = draw_panel(&ctx, &mut crab_quest_ui, &fb);
         assert!(
             shapes_contain_text(&out.shapes, "程序运行崩溃（索引越界）"),
             "panic 分类标题缺失"
@@ -2184,8 +2184,8 @@ mod tests {
             expected: "a\nb".into(),
             actual: "a\nc".into(),
         });
-        let mut game_ui = GameUi::new();
-        let out = draw_panel(&ctx, &mut game_ui, &fb);
+        let mut crab_quest_ui = GameUi::new();
+        let out = draw_panel(&ctx, &mut crab_quest_ui, &fb);
         assert!(
             shapes_contain_text(&out.shapes, "期望输出"),
             "diff 期望列表头缺失"
@@ -2207,8 +2207,8 @@ mod tests {
             "",
             None,
         )]);
-        let mut game_ui = GameUi::new();
-        let out = draw_panel(&ctx, &mut game_ui, &fb);
+        let mut crab_quest_ui = GameUi::new();
+        let out = draw_panel(&ctx, &mut crab_quest_ui, &fb);
         assert!(
             shapes_contain_text(&out.shapes, "EUNKNOWN"),
             "兜底卡徽章缺失"
@@ -2291,9 +2291,9 @@ mod tests {
     /// toast：离线点击链接后设置 toast 文案，下一次绘制可见（3 秒内）
     #[test]
     fn feedback_link_offline_click_sets_toast() {
-        let mut game_ui = GameUi::new();
-        game_ui.offline = true;
-        game_ui.set_toast("无法打开在线教材（当前离线）");
+        let mut crab_quest_ui = GameUi::new();
+        crab_quest_ui.offline = true;
+        crab_quest_ui.set_toast("无法打开在线教材（当前离线）");
         let ctx = egui::Context::default();
         let fb = fail_fb(vec![card(
             "E0425",
@@ -2302,7 +2302,7 @@ mod tests {
             "",
             Some("https://doc.rust-lang.org/error_codes/E0425.html"),
         )]);
-        let out = draw_panel(&ctx, &mut game_ui, &fb);
+        let out = draw_panel(&ctx, &mut crab_quest_ui, &fb);
         assert!(
             shapes_contain_text(&out.shapes, "无法打开在线教材"),
             "toast 应绘制出来"
@@ -2330,8 +2330,8 @@ mod tests {
         let ctx = egui::Context::default();
         // line = Some → 链接样式（下划线）行号
         let fb = fail_fb(vec![card("E0308", Some(2), "类型不匹配", "", None)]);
-        let mut game_ui = GameUi::new();
-        let out = draw_panel(&ctx, &mut game_ui, &fb);
+        let mut crab_quest_ui = GameUi::new();
+        let out = draw_panel(&ctx, &mut crab_quest_ui, &fb);
         assert!(shapes_contain_text(&out.shapes, "第 2 行"), "行号应渲染");
         assert!(
             shapes_contain_underlined(&out.shapes, "第 2 行"),
@@ -2339,8 +2339,8 @@ mod tests {
         );
         // line = None（EUNKNOWN 无 --> 行）→ 不渲染可点击行号
         let fb_none = fail_fb(vec![card("EUNKNOWN", None, "编译错误", "", None)]);
-        let mut game_ui2 = GameUi::new();
-        let out2 = draw_panel(&ctx, &mut game_ui2, &fb_none);
+        let mut crab_quest_ui2 = GameUi::new();
+        let out2 = draw_panel(&ctx, &mut crab_quest_ui2, &fb_none);
         assert!(
             !shapes_contain_text(&out2.shapes, "第 "),
             "line=None 不渲染行号"
@@ -2352,7 +2352,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut app = test_app();
         app.handle(Input::Enter).unwrap(); // 进入编辑器（last_level 就位）
-        let mut game_ui = GameUi::new();
+        let mut crab_quest_ui = GameUi::new();
         let fb = fail_fb(vec![card("E0308", Some(2), "类型不匹配", "", None)]);
         let screen_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 700.0));
         let raw = |events: Vec<egui::Event>| egui::RawInput {
@@ -2364,7 +2364,7 @@ mod tests {
         let mut line_pos: Option<egui::Pos2> = None;
         ctx.run(raw(vec![]), |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
-                game_ui.draw_feedback_panel(ui, &mut app, &fb, true);
+                crab_quest_ui.draw_feedback_panel(ui, &mut app, &fb, true);
             });
         })
         .shapes
@@ -2390,7 +2390,7 @@ mod tests {
             raw(vec![egui::Event::PointerMoved(pos), button(true)]),
             |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    game_ui.draw_feedback_panel(ui, &mut app, &fb, true);
+                    crab_quest_ui.draw_feedback_panel(ui, &mut app, &fb, true);
                 });
             },
         );
@@ -2399,7 +2399,7 @@ mod tests {
             raw(vec![egui::Event::PointerMoved(pos), button(false)]),
             |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    game_ui.draw_feedback_panel(ui, &mut app, &fb, true);
+                    crab_quest_ui.draw_feedback_panel(ui, &mut app, &fb, true);
                 });
             },
         );
@@ -2418,18 +2418,18 @@ mod tests {
     fn focus_jump_applies_cursor_at_line_start() {
         let ctx = egui::Context::default();
         let mut app = test_app();
-        let mut game_ui = GameUi::new();
+        let mut crab_quest_ui = GameUi::new();
         app.handle(Input::Enter).unwrap();
         // 首帧：同步 code_buf
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            game_ui.draw(ctx, &mut app);
+            crab_quest_ui.draw(ctx, &mut app);
         });
         let code = "fn main() {\n    let x = 1;\n    println!(\"hi\");\n}";
-        game_ui.code_buf = code.into();
-        game_ui.sync_code(&mut app);
+        crab_quest_ui.code_buf = code.into();
+        crab_quest_ui.sync_code(&mut app);
         app.focus_line = Some(2); // 第 3 行（0-based）
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            game_ui.draw(ctx, &mut app);
+            crab_quest_ui.draw(ctx, &mut app);
         });
         assert_eq!(app.focus_line, None, "跳转应用后清除（一次性）");
         // 读取稳定编辑器 id 的持久化状态：光标应等于第 3 行行首。
@@ -2455,16 +2455,16 @@ mod tests {
         // 端到端：focus_line 越界 → 应用后光标在末尾
         let ctx = egui::Context::default();
         let mut app = test_app();
-        let mut game_ui = GameUi::new();
+        let mut crab_quest_ui = GameUi::new();
         app.handle(Input::Enter).unwrap();
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            game_ui.draw(ctx, &mut app);
+            crab_quest_ui.draw(ctx, &mut app);
         });
-        game_ui.code_buf = code.into();
-        game_ui.sync_code(&mut app);
+        crab_quest_ui.code_buf = code.into();
+        crab_quest_ui.sync_code(&mut app);
         app.focus_line = Some(99);
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            game_ui.draw(ctx, &mut app);
+            crab_quest_ui.draw(ctx, &mut app);
         });
         let id = egui::Id::new(EDITOR_ID_SALT);
         let st = egui::TextEdit::load_state(&ctx, id).expect("编辑器应有持久化光标状态");
@@ -2481,21 +2481,21 @@ mod tests {
         // 连续两次跳转：第二次覆盖第一次（不同错误 → 光标正确切换）
         let ctx = egui::Context::default();
         let mut app = test_app();
-        let mut game_ui = GameUi::new();
+        let mut crab_quest_ui = GameUi::new();
         app.handle(Input::Enter).unwrap();
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            game_ui.draw(ctx, &mut app);
+            crab_quest_ui.draw(ctx, &mut app);
         });
         let code = "a\nbb\nccc\ndddd";
-        game_ui.code_buf = code.into();
-        game_ui.sync_code(&mut app);
+        crab_quest_ui.code_buf = code.into();
+        crab_quest_ui.sync_code(&mut app);
         app.focus_line = Some(1); // 第 2 行
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            game_ui.draw(ctx, &mut app);
+            crab_quest_ui.draw(ctx, &mut app);
         });
         app.focus_line = Some(3); // 第 4 行
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            game_ui.draw(ctx, &mut app);
+            crab_quest_ui.draw(ctx, &mut app);
         });
         let id = egui::Id::new(EDITOR_ID_SALT);
         let st = egui::TextEdit::load_state(&ctx, id).unwrap();
@@ -2576,10 +2576,10 @@ mod tests {
         let mut app = unlock_hint_test_app();
         app.handle(Input::Enter).unwrap();
         set_fail_count(&mut app, "h", 4);
-        let mut game_ui = GameUi::new();
-        game_ui.ref_dialog = true;
+        let mut crab_quest_ui = GameUi::new();
+        crab_quest_ui.ref_dialog = true;
         let out_open = ctx.run(egui::RawInput::default(), |ctx| {
-            game_ui.draw(ctx, &mut app);
+            crab_quest_ui.draw(ctx, &mut app);
         });
         assert!(
             shapes_contain_text(&out_open.shapes, "先自己试试？"),
@@ -2595,10 +2595,10 @@ mod tests {
             "确认前不展示答案块"
         );
         // 拒绝
-        game_ui.answer_reference(&mut app, false);
-        assert!(!game_ui.ref_dialog, "拒绝后弹窗关闭");
+        crab_quest_ui.answer_reference(&mut app, false);
+        assert!(!crab_quest_ui.ref_dialog, "拒绝后弹窗关闭");
         let out_rej = ctx.run(egui::RawInput::default(), |ctx| {
-            game_ui.draw(ctx, &mut app);
+            crab_quest_ui.draw(ctx, &mut app);
         });
         assert!(
             !shapes_contain_text(&out_rej.shapes, "先自己试试？"),
@@ -2623,18 +2623,18 @@ mod tests {
             other => panic!("expected Level, got {other:?}"),
         }
         // —— 确认路径：查看答案 → 展示参考答案（最后一条 hint）+ 记录查看
-        game_ui.ref_dialog = true;
+        crab_quest_ui.ref_dialog = true;
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            game_ui.draw(ctx, &mut app);
+            crab_quest_ui.draw(ctx, &mut app);
         });
-        game_ui.answer_reference(&mut app, true);
+        crab_quest_ui.answer_reference(&mut app, true);
         assert_eq!(
             app.engine.save.level_states.get("h").unwrap().hints_used,
             vec![2],
             "确认后记录最后一条 hint 查看"
         );
         let out_conf = ctx.run(egui::RawInput::default(), |ctx| {
-            game_ui.draw(ctx, &mut app);
+            crab_quest_ui.draw(ctx, &mut app);
         });
         assert!(
             shapes_contain_text(&out_conf.shapes, "📖 参考答案"),
@@ -2653,9 +2653,9 @@ mod tests {
         app.handle(Input::Enter).unwrap();
         set_fail_count(&mut app, "h", 3); // 全部解锁，自动推进到 hint[1]
         app.handle(Input::Hint).unwrap(); // 打开面板（联动模式）
-        let mut game_ui = GameUi::new();
+        let mut crab_quest_ui = GameUi::new();
         let out = ctx.run(egui::RawInput::default(), |ctx| {
-            game_ui.draw(ctx, &mut app);
+            crab_quest_ui.draw(ctx, &mut app);
         });
         assert!(
             shapes_contain_text(&out.shapes, "💡 提示 1/3: 概念"),

@@ -1,20 +1,20 @@
 //! 共享测试工具（Tier 2 / Tier 3 共用）。
 //!
 //! - 极简 flat TOML 读取：expected.toml 只有 `key = value` 标量行（无嵌套/数组），
-//!   手写解析避免给 game-core 加 dev-dependency。
+//!   手写解析避免给 crab-quest-core 加 dev-dependency。
 //! - panic 分类 id 双向映射（与 src/validate/error_parser.rs 的 8 类对应）。
 //! - 15 关 starter 期望画像表 + 通用 check_level（Tier 3 与 bwrap 集成测试共用，
 //!   单一事实源防漂移；沙盒实现无关）。
 //! - 仓库路径解析：测试二进制 CWD 由 cargo 决定，统一用 CARGO_MANIFEST_DIR 定位。
 #![allow(dead_code)] // 本模块被每个测试二进制独立编译，各自只用到子集
 
-use game_core::level::Level;
-use game_core::sandbox::{CompileOutcome, RunOutcome, Sandbox};
-use game_core::validate::error_parser::{sanitize_panic, IssueKind, PanicClass};
+use crab_quest_core::level::Level;
+use crab_quest_core::sandbox::{CompileOutcome, RunOutcome, Sandbox};
+use crab_quest_core::validate::error_parser::{sanitize_panic, IssueKind, PanicClass};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-/// crates/game-core/ 根（cargo 注入的 MANIFEST_DIR）
+/// crates/crab-quest-core/ 根（cargo 注入的 MANIFEST_DIR）
 pub fn crate_root() -> PathBuf {
     PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR 由 cargo 注入"))
 }

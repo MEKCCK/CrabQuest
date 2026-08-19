@@ -9,19 +9,19 @@
 //! 本机（rustc 1.97）实测 4 路并行 ≈ 0.9s、串行 ≈ 1.7s，均远低于预算。
 //!
 //! # CI 策略
-//! 本文件所有需要真实编译的测试都标 `#[ignore]`：本地 `cargo test -p game-core`
+//! 本文件所有需要真实编译的测试都标 `#[ignore]`：本地 `cargo test -p crab-quest-core`
 //! 默认跳过（依赖 rustc 可执行文件 + 约 3-8s，不宜进日常增量）；CI 用
-//! `cargo test -p game-core -- --ignored` 全跑。`fixture_metadata_consistency`
+//! `cargo test -p crab-quest-core -- --ignored` 全跑。`fixture_metadata_consistency`
 //! 是纯静态检查（零 rustc），默认运行。
 
 mod common;
 use common::*;
 
-use game_core::level::parse_levels;
-use game_core::sandbox::{CompileOutcome, DevSandbox, RunOutcome, Sandbox};
-use game_core::validate::error_parser::{sanitize_panic, IssueKind};
-use game_core::validate::mapper::ErrorMapper;
-use game_core::validate::{validate, Validation};
+use crab_quest_core::level::parse_levels;
+use crab_quest_core::sandbox::{CompileOutcome, DevSandbox, RunOutcome, Sandbox};
+use crab_quest_core::validate::error_parser::{sanitize_panic, IssueKind};
+use crab_quest_core::validate::mapper::ErrorMapper;
+use crab_quest_core::validate::{validate, Validation};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;

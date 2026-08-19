@@ -1,6 +1,6 @@
 #[test]
 fn all_levels_parse_and_consistent() {
-    let set = game_core::LevelSet::load(&game_data::levels_dir()).expect("关卡目录加载失败");
+    let set = crab_quest_core::LevelSet::load(&crab_quest_data::levels_dir()).expect("关卡目录加载失败");
     assert_eq!(set.len(), 56, "当前内置关卡集应有 56 关");
     let mut tiers = std::collections::BTreeSet::new();
     for l in &set.levels {
@@ -55,7 +55,7 @@ fn all_levels_parse_and_consistent() {
 }
 
 /// 把单关 TOML 写入临时目录后走 LevelSet::load 加载路径，返回结果
-fn load_single_level(toml: &str) -> Result<game_core::LevelSet, game_core::GameError> {
+fn load_single_level(toml: &str) -> Result<crab_quest_core::LevelSet, crab_quest_core::GameError> {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -63,7 +63,7 @@ fn load_single_level(toml: &str) -> Result<game_core::LevelSet, game_core::GameE
     let dir = std::env::temp_dir().join(format!("rlg-levels-test-{}-{nanos}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("00-test.toml"), toml).unwrap();
-    let result = game_core::LevelSet::load(&dir);
+    let result = crab_quest_core::LevelSet::load(&dir);
     let _ = std::fs::remove_dir_all(&dir);
     result
 }
@@ -133,7 +133,7 @@ link = "https://rustwiki.org/zh-CN/rust-by-example/"
 
 #[test]
 fn errors_toml_has_required_codes() {
-    let mapper = game_core::ErrorMapper::load(&game_data::errors_path()).expect("errors.toml 解析失败");
+    let mapper = crab_quest_core::ErrorMapper::load(&crab_quest_data::errors_path()).expect("errors.toml 解析失败");
     for code in ["E0308", "E0382", "E0502", "E0596", "E0106"] {
         assert!(mapper.lookup(code).is_some(), "缺少错误码 {code}");
     }
@@ -143,8 +143,8 @@ fn errors_toml_has_required_codes() {
 /// link_zh 仅允许 rustwiki.org 白名单（v3 §6.3）。
 #[test]
 fn errors_toml_v2_entries_complete_and_bounded() {
-    use game_core::validate::mapper::Severity;
-    let mapper = game_core::ErrorMapper::load(&game_data::errors_path()).expect("errors.toml 解析失败");
+    use crab_quest_core::validate::mapper::Severity;
+    let mapper = crab_quest_core::ErrorMapper::load(&crab_quest_data::errors_path()).expect("errors.toml 解析失败");
     assert!(!mapper.is_empty());
     for (code, info) in mapper.iter() {
         assert!(!info.zh.is_empty(), "{code} 缺 zh");
@@ -177,7 +177,7 @@ fn errors_toml_v2_entries_complete_and_bounded() {
 /// P1-02 验收：新增码 12+ 枚全部收录（这里断言 14 枚全在，活跃条目 ≥32）
 #[test]
 fn errors_toml_has_all_new_entries() {
-    let mapper = game_core::ErrorMapper::load(&game_data::errors_path()).expect("errors.toml 解析失败");
+    let mapper = crab_quest_core::ErrorMapper::load(&crab_quest_data::errors_path()).expect("errors.toml 解析失败");
     let new_codes = [
         "E0282", "E0384", "E0594", "E0621", "E0601", // P0 5 码
         "E0506",                                        // P1 borrow 家族
@@ -197,8 +197,8 @@ fn errors_toml_has_all_new_entries() {
 /// P1-02 验收：全部 P0 码（A 组 6 + B 组 5）在活跃表中且 severity=P0
 #[test]
 fn errors_toml_all_p0_codes_present() {
-    use game_core::validate::mapper::Severity;
-    let mapper = game_core::ErrorMapper::load(&game_data::errors_path()).expect("errors.toml 解析失败");
+    use crab_quest_core::validate::mapper::Severity;
+    let mapper = crab_quest_core::ErrorMapper::load(&crab_quest_data::errors_path()).expect("errors.toml 解析失败");
     for code in [
         "E0425", "E0596", "E0382", "E0106", "E0599", "E0597",
         "E0282", "E0384", "E0594", "E0621", "E0601",
@@ -211,7 +211,7 @@ fn errors_toml_all_p0_codes_present() {
 /// P1-02 验收：E0412/E0504 不在活跃查找中，且已在 [deprecated] 登记（注明替代码）
 #[test]
 fn errors_toml_deprecated_codes_absent_and_registered() {
-    let mapper = game_core::ErrorMapper::load(&game_data::errors_path()).expect("errors.toml 解析失败");
+    let mapper = crab_quest_core::ErrorMapper::load(&crab_quest_data::errors_path()).expect("errors.toml 解析失败");
     assert!(mapper.lookup("E0412").is_none(), "E0412 死码不得出现在活跃映射");
     assert!(mapper.lookup("E0504").is_none(), "E0504 死码不得出现在活跃映射");
     let r1 = mapper.deprecated_reason("E0412").expect("E0412 应在 [deprecated] 登记");
@@ -223,7 +223,7 @@ fn errors_toml_deprecated_codes_absent_and_registered() {
 /// P1-02 验收：[fallback] 段解析成功且指向官方错误码索引
 #[test]
 fn errors_toml_has_fallback_section() {
-    let mapper = game_core::ErrorMapper::load(&game_data::errors_path()).expect("errors.toml 解析失败");
+    let mapper = crab_quest_core::ErrorMapper::load(&crab_quest_data::errors_path()).expect("errors.toml 解析失败");
     let fb = mapper.fallback().expect("errors.toml 必须含 [fallback] 段");
     assert!(!fb.zh.is_empty());
     assert_eq!(fb.link, "https://doc.rust-lang.org/error_codes/index.html");
@@ -233,7 +233,7 @@ fn errors_toml_has_fallback_section() {
 /// 8 张高频卡（L3-D2 精修）人话首段 ≤30 字；全表术语合规（v3 §6.1：无 生存期/特征/悬挂）。
 #[test]
 fn errors_toml_p0_cards_complete_and_terminology_clean() {
-    let mapper = game_core::ErrorMapper::load(&game_data::errors_path()).expect("errors.toml 解析失败");
+    let mapper = crab_quest_core::ErrorMapper::load(&crab_quest_data::errors_path()).expect("errors.toml 解析失败");
     let p0 = [
         "E0425", "E0596", "E0382", "E0106", "E0599", "E0597",
         "E0282", "E0384", "E0594", "E0621", "E0601",

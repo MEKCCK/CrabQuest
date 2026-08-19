@@ -1,5 +1,5 @@
 [package]
-name = "game-core"
+name = "crab-quest-core"
 version.workspace = true
 edition.workspace = true
 

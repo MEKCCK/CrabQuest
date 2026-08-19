@@ -4,12 +4,12 @@
 //! 接线：代码关调用编译验证、选择题提交选项且不经过代码编辑器、所有失败都产生
 //! 可展示的反馈，之后可返回地图继续选择下一关。
 
-use game_core::app::{GameApp, Input, Screen};
-use game_core::engine::Engine;
-use game_core::level::LevelSet;
-use game_core::sandbox::DevSandbox;
-use game_core::save::{LevelProgress, LevelState, SaveData};
-use game_core::validate::mapper::ErrorMapper;
+use crab_quest_core::app::{GameApp, Input, Screen};
+use crab_quest_core::engine::Engine;
+use crab_quest_core::level::LevelSet;
+use crab_quest_core::sandbox::DevSandbox;
+use crab_quest_core::save::{LevelProgress, LevelState, SaveData};
+use crab_quest_core::validate::mapper::ErrorMapper;
 
 fn assets_levels_dir() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/levels")

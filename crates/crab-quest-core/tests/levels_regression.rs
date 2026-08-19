@@ -14,11 +14,11 @@
 mod common;
 use common::*;
 
-use game_core::level::LevelSet;
-use game_core::sandbox::{CompileOutcome, DevSandbox, Sandbox};
-use game_core::validate::error_parser::IssueKind;
-use game_core::validate::mapper::ErrorMapper;
-use game_core::validate::{validate, Validation};
+use crab_quest_core::level::LevelSet;
+use crab_quest_core::sandbox::{CompileOutcome, DevSandbox, Sandbox};
+use crab_quest_core::validate::error_parser::IssueKind;
+use crab_quest_core::validate::mapper::ErrorMapper;
+use crab_quest_core::validate::{validate, Validation};
 
 /// Tier 3 主断言：55 关 starter 编译画像（错误码 / 编译成功 / panic 分类）。
 #[test]

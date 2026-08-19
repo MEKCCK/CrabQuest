@@ -20,7 +20,7 @@
 ### 1. 执行层：新增 `PythonSandbox`（实现现有 `Sandbox` trait）
 
 ```rust
-// crates/game-core/src/sandbox/python.rs
+// crates/crab-quest-core/src/sandbox/python.rs
 pub struct PythonSandbox { pub run_timeout_secs: u64 }
 
 impl Sandbox for PythonSandbox {
@@ -58,7 +58,7 @@ impl Sandbox for PythonSandbox {
 ### 6. 分发：语言注册表
 
 ```rust
-// crates/game-core/src/language/mod.rs（未来）
+// crates/crab-quest-core/src/language/mod.rs（未来）
 pub trait Language {
     fn id(&self) -> &'static str;
     fn display_name(&self) -> &'static str;

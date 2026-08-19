@@ -1,12 +1,12 @@
-# Rust 学习游戏
+# 🦀 CrabQuest
 
-闯关式 Rust 学习游戏：每一关给出任务描述与初始代码（通常有 bug），玩家修改代码提交，
+闯关式 Rust 学习游戏（CrabQuest）：每一关给出任务描述与初始代码（通常有 bug），玩家修改代码提交，
 游戏调用 rustc 编译、运行并比对输出，把编译器报错翻译成中文提示与学习链接。
 
 ## 运行
 
 ```bash
-cargo run -p game-ui
+cargo run -p crab-quest-ui
 ```
 
 要求：rustc 1.75+（编译校验用系统 rustc）、macroquad 所需系统库
@@ -25,7 +25,7 @@ cargo run -p game-ui
 
 - 关卡：`assets/levels/*.toml`（`[[level]]` 数组，字段见各文件）
 - 错误码中文映射：`assets/errors.toml`（E0xxx → 中文解释 + 官方文档链接）
-- 存档：`~/.local/share/rust-learning-game/save.toml`
+- 存档：`~/.local/share/crab-quest/save.toml`
 - 新增关卡 = 在 `assets/levels/` 放一个 TOML，文件名前缀决定顺序
 
 ## 代码校验与安全
@@ -45,14 +45,14 @@ cargo run -p game-ui
 - 提示参考 The Book 与 course.rs，均已改写精简
 - 每个关卡 TOML 的 `source` 字段标注具体出处
 - UI 字体：JetBrains Maple Mono —— JetBrains Mono（OFL 1.1）与 Maple Mono（OFL 1.1）合并版，
-  内嵌于 `crates/game-ui/assets/JetBrainsMapleMono-Regular.ttf`，覆盖 CJK 中文字形；
-  许可全文见 `crates/game-ui/assets/OFL.txt`（SIL Open Font License 1.1，含双版权声明）
+  内嵌于 `crates/crab-quest-ui/assets/JetBrainsMapleMono-Regular.ttf`，覆盖 CJK 中文字形；
+  许可全文见 `crates/crab-quest-ui/assets/OFL.txt`（SIL Open Font License 1.1，含双版权声明）
 - 编辑器不支持中文输入法（IME 不可用），中文内容请复制粘贴；关卡设计已保证玩家无需手输中文
 
 ## 架构
 
 ```
-game-core   纯逻辑：关卡/校验/错误解析/存档/沙盒抽象/着色/引擎/GameApp 状态机（零 UI 依赖）
-game-ui     macroquad + egui 前端（实现 UiBackend trait，可替换）
-game-data   关卡与错误码资源路径
+crab-quest-core   纯逻辑：关卡/校验/错误解析/存档/沙盒抽象/着色/引擎/GameApp 状态机（零 UI 依赖）
+crab-quest-ui     macroquad + egui 前端（实现 UiBackend trait，可替换）
+crab-quest-data   关卡与错误码资源路径
 ```
