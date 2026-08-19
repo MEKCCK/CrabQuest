@@ -97,6 +97,7 @@ pub enum StarterExpect {
 pub fn starter_expect(id: &str) -> StarterExpect {
     match id {
         // 00-l0-hello：x 未声明 → E0425（F1）
+        "l0-hello-world" => StarterExpect::Compiles,
         "l0-hello" => StarterExpect::CompileFail { code: "E0425" },
         // 01-l0-print：println! 格式参数数量错误，无 E 码 → EUNKNOWN（F12）
         "l0-print" => StarterExpect::CompileFail { code: "EUNKNOWN" },

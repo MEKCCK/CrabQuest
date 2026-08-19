@@ -1,0 +1,17 @@
+[[level]]
+id = "l0-hello-world"
+title = "Hello, World!"
+tier = "l0"
+description = "你的第一个 Rust 程序：让程序输出 Hello, world!。代码可以编译，但还没有任何输出。涉及概念：main 函数、println! 宏、字符串字面量。"
+hint = "在 main 函数体里用 println! 打印一句话。"
+hints = [
+  "程序从 main 函数开始执行，函数体用花括号包裹；println! 会把内容打印到屏幕，后面跟的字符串用双引号包裹。",
+  "见 book-cn ch01-02「Hello, World!」：https://rustwiki.org/zh-CN/book/ch01-02-hello-world.html",
+  "在 main 的花括号内加上一行：println!(\"Hello, world!\");",
+]
+starter_code = '''
+fn main() {
+}
+'''
+expect_output = "Hello, world!"
+source = "自编 (Hello World 入门关，无原题)"

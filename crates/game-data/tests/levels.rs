@@ -1,7 +1,7 @@
 #[test]
 fn all_levels_parse_and_consistent() {
     let set = game_core::LevelSet::load(&game_data::levels_dir()).expect("关卡目录加载失败");
-    assert_eq!(set.len(), 55, "当前内置关卡集应有 55 关");
+    assert_eq!(set.len(), 56, "当前内置关卡集应有 56 关");
     let mut tiers = std::collections::BTreeSet::new();
     for l in &set.levels {
         tiers.insert(l.tier.order());

@@ -41,7 +41,7 @@ fn every_builtin_level_reaches_feedback_through_player_flow() {
     let level_count = LevelSet::load(&assets_levels_dir())
         .expect("加载内置关卡素材")
         .len();
-    assert_eq!(level_count, 55, "新增内置关卡时须覆盖本玩家流程回归");
+    assert_eq!(level_count, 56, "新增内置关卡时须覆盖本玩家流程回归");
 
     for index in 0..level_count {
         // 独立 app 防止失败扣心、XP 和解锁状态影响另一个关卡的结果。
