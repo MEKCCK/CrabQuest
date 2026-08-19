@@ -10,7 +10,6 @@ pub mod rank;
 pub mod sandbox;
 pub mod save;
 pub mod streak;
-pub mod ui;
 pub mod validate;
 
 pub use app::{
@@ -33,7 +32,6 @@ pub use streak::{
 
 pub use achievements::{achievement_name, check_achievements, AchievementCheck, ACHIEVEMENTS};
 
-pub use ui::UiBackend;
 
 pub use validate::error_parser::{parse_rustc_stderr, CompileError};
 pub use validate::mapper::{ErrorInfo, ErrorMapper};

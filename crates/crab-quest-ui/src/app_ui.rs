@@ -1,4 +1,4 @@
-use egui_macroquad::egui;
+use eframe::egui;
 use crab_quest_core::app::{
     ChapterMapData, FeedbackData, GameApp, GameFlow, Input, LevelData, MenuData, Screen,
 };
@@ -8,9 +8,8 @@ use crab_quest_core::engine::{
 };
 use crab_quest_core::error::GameError;
 use crab_quest_core::level::LevelTier;
-use crab_quest_core::ui::UiBackend;
+use crab_quest_core::save;
 use crab_quest_core::validate::{ErrorCard, OutputDiff};
-use macroquad::prelude::*;
 
 use crate::icons::{Icon, IconLibrary};
 
@@ -1537,30 +1536,48 @@ fn line_start_ccursor(code: &str, line: usize) -> egui::text::CCursor {
     egui::text::CCursor::new(code[..byte].chars().count())
 }
 
-impl UiBackend for GameUi {
-    async fn run(&mut self, app: &mut GameApp) -> Result<(), GameError> {
-        // P1-03 链接降级：启动时探测一次在线状态（≤3s，缓存 offline 标志）。
-        // 设计选择：不引入 HTTP/TLS 依赖（egui-macroquad 栈无网络库），
-        // 纯 TCP 80 端口 HEAD，任何 HTTP 响应即在线。
-        self.offline = !probe_online();
-        let mut fonts_installed = false;
-        loop {
-            // 与 `framebuffer_alpha = true` 配套：不要在根 framebuffer 上清不透明底色。
-            clear_background(Color::new(0.0, 0.0, 0.0, 0.0));
-            egui_macroquad::ui(|ctx| {
-                if !fonts_installed {
-                    install_fonts(ctx);
-                    fonts_installed = true;
-                }
-                self.draw(ctx, app);
-            });
-            egui_macroquad::draw();
-            if self.quit {
-                break;
-            }
-            next_frame().await;
+/// eframe::App 壳层：持有核心状态机 + UI 状态，由 eframe(winit) 驱动事件循环。
+/// winit 原生支持 IME（中文输入法）——解决 egui-miniquad 无 IME 通道的问题，
+/// 并统一 X11/Wayland/Windows/macOS 窗口行为（跨平台）。
+pub struct CrabQuestApp {
+    game: GameApp,
+    ui: GameUi,
+    fonts_installed: bool,
+    online_probed: bool,
+}
+
+impl CrabQuestApp {
+    pub fn new(game: GameApp, ui: GameUi) -> Self {
+        Self { game, ui, fonts_installed: false, online_probed: false }
+    }
+}
+
+impl eframe::App for CrabQuestApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // 首帧安装中文字体（一次性，避免每帧重建字体图集）
+        if !self.fonts_installed {
+            install_fonts(ctx);
+            self.fonts_installed = true;
         }
-        Ok(())
+        // 首次进入时探测一次在线状态（≤3s，缓存 offline 标志），此后不再探测
+        if !self.online_probed {
+            self.ui.offline = !probe_online();
+            self.online_probed = true;
+        }
+        let was_quit = self.ui.quit;
+        self.ui.draw(ctx, &mut self.game);
+        // 菜单「退出」→ 请求关闭窗口 → on_exit 落盘
+        if self.ui.quit && !was_quit {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if let Some(path) = self.ui.save_path.clone() {
+            if let Err(e) = save::save(self.game.save_ref(), &path) {
+                eprintln!("存档失败: {e}");
+            }
+        }
     }
 }
 

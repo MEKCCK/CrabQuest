@@ -1,4 +1,4 @@
 pub mod app_ui;
 pub mod icons;
 
-pub use app_ui::GameUi;
+pub use app_ui::{CrabQuestApp, GameUi};

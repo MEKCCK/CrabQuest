@@ -13,7 +13,7 @@
 | 校验编排 `validate()`（validate/mod.rs:133） | compile → run → compare 的流程本身语言无关；`allow_compile_fail`/quiz/panic 分支通用 | 内部调用了 Rust 的 `ErrorMapper` 与错误解析 |
 | `Level` 模型（level.rs） | `starter_code / expect_output / allow_compile_fail / expect_error_code / kind / options / answer_index / link`——对任何语言都成立 | 无 |
 | 游戏状态机 `GameApp` / `Engine` | 只消费 `Validation`，不感知具体语言 | 无 |
-| UI（game-ui） | 只渲染 `Screen` 数据 + 调 `tokenize` 着色 | 着色函数当前是 rustc_lexer |
+| UI 壳层（game-ui，eframe/winit） | 只渲染 `Screen` 数据 + 调 `tokenize` 着色 | 着色函数当前是 rustc_lexer |
 
 ## 新语言接入步骤（以 Python 为例，未来照此执行）
 

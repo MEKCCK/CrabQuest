@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use egui_macroquad::egui;
+use eframe::egui;
 
 /// 游戏核心机制对应的统一线性图标。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
